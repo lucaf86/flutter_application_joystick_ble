@@ -52,6 +52,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
   // Canali di controllo ausiliari (Piccoli)
   double _tilt = 0.0;     // Inclinazione (Orizzontale)
   double _lift = 0.0;     // Elevazione (Verticale)
+
   bool _isLightOn = false; // Controllato direttamente dal feedback dell'ESP32
 
   String _lastSentData = "";
@@ -102,8 +103,11 @@ class _RcControllerPageState extends State<RcControllerPage> {
   }
 
   void _stopTransmissionTimer() {
-    _transmissionTimer?.cancel();
-    _transmissionTimer = null;
+    if (_transmissionTimer != null) {
+      print("[TIMER] Arresto della routine periodica.");
+      _transmissionTimer?.cancel();
+      _transmissionTimer = null;
+    }
   }
 
   void _startScan() async {
@@ -172,18 +176,26 @@ class _RcControllerPageState extends State<RcControllerPage> {
                   });
                 } else {
                   setState(() {
-		    // Rimuove eventuali simboli '%' se inviati dall'ESP32 per estrarre solo il numero
+                     // Rimuove eventuali simboli '%' se inviati dall'ESP32 per estrarre solo il numero
                     _livelloBatteria = int.tryParse(datoStringa.replaceAll('%', '')) ?? 100;
                   });
                 }
-		print("Dati ricevuti dall'ESP32: $datoStringa");
+                //print("Dati ricevuti dall'ESP32: $datoStringa");
               });
             }
           }
         }
       }
+
+       // Chiamiamo il timer all'esterno del ciclo, solo se la caratteristica TX è pronta
+      if (_txCharacteristic != null) {
+        _startTransmissionTimer();
+      } else {
+        print("[ERRORE] Connessione riuscita ma caratteristica TX non trovata o UUID errato!");
+      }
+
     } catch (e) {
-      print("Errore connessione: $e");
+      print("Errore connessione BT: $e");
     }
   }
 
@@ -207,7 +219,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
     try {
       await _txCharacteristic!.write(utf8.encode(dataString), withoutResponse: true);
     } catch (e) {
-      print("Errore trasmissione: $e");
+      print("Errore trasmissione periodica: $e");
     }
   }
 
@@ -217,7 +229,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
     try {
       await _txCharacteristic!.write(utf8.encode(action), withoutResponse: false);
     } catch (e) {
-      print("Errore pulsante: $e");
+      print("Errore luci: $e");
     }
   }
 
@@ -305,6 +317,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
                   Text("CONNECTED", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13, fontFamily: 'monospace')),
                 ],
               ),
+
               // --- INDICATORE GRAFICO DELLA BATTERIA A BARRA ---
               Row(
                 children: [
@@ -340,7 +353,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
                       color: Colors.black54,
                       borderRadius: BorderRadius.only(
                         topRight: Radius.circular(2),
-                        bottomRight: Radius.circular(2),
+                        bottomRight: Radius.circular(2)
                       ),
                     ),
                   ),
@@ -349,7 +362,6 @@ class _RcControllerPageState extends State<RcControllerPage> {
             ],
           ),
         ),
-
         // ================= LATO SINISTRO (SFALSATO COERENTE) =================
         // 1. Tilt (Piccolo, Alto) -> Esterno (left: 20, top: 45)
         Positioned(
@@ -370,8 +382,8 @@ class _RcControllerPageState extends State<RcControllerPage> {
             joystickSize: 180.0, thumbSize: 64.0, value: _sterzo, isVertical: false, color: Colors.amber, 
             embeddedLabel: "S", 
             onChanged: (val) { setState(() { _sterzo = val; }); }
-),
-),
+           ),
+        ),
         // ================= SEZIONE CENTRALE (Pulsanti Home e Luci) =================
 	Center(
 	  child: Column(
@@ -431,13 +443,22 @@ class _RcControllerPageState extends State<RcControllerPage> {
     required ValueChanged onChanged,
     }) {
       return GestureDetector(
-        onPanUpdate: (details) {
-          double center = joystickSize / 2;
-          double offset = isVertical ? details.localPosition.dy : details.localPosition.dx;
-          double normalized = (offset - center) / center;
-          onChanged(normalized.clamp(-1.0, 1.0));
-        },
-        onPanEnd: (_) => onChanged(0.0),
+// RISOLTO: Intercettamento nativo direzionale bloccato per asse per bypassare i gesti di Android
+onVerticalDragUpdate: isVertical ? (details) {
+double center = joystickSize / 2;
+double offset = details.localPosition.dy;
+double normalized = (offset - center) / center;
+onChanged(normalized.clamp(-1.0, 1.0));
+} : null,
+onHorizontalDragUpdate: !isVertical ? (details) {
+double center = joystickSize / 2;
+double offset = details.localPosition.dx;
+double normalized = (offset - center) / center;
+onChanged(normalized.clamp(-1.0, 1.0));
+} : null,
+// RISOLTO: Aggiunto il parametro (_) per renderlo compatibile con GestureDragEndCallback
+      onVerticalDragEnd: isVertical ? (_) => onChanged(0.0) : null,
+      onHorizontalDragEnd: !isVertical ? (_) => onChanged(0.0) : null,
         child: Container(
           width: joystickSize,
           height: joystickSize,
