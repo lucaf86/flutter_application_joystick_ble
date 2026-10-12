@@ -1,4 +1,4 @@
-package com.example.flutter_application_joystick_ble
+package com.forklift.controller
 
 import io.flutter.embedding.android.FlutterActivity
 
