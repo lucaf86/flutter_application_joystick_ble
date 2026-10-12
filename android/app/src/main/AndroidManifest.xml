@@ -2,7 +2,7 @@
     <!-- Permessi per la scansione e la connessione BLE (Android 12 o superiori) -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Permessi di retrocompatibilità per telefoni più vecchi (Android 11 o inferiori) -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
