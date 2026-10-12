@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:flutter/services.dart';
 import 'raw_joystick.dart';
 import 'web_config_page.dart';
 
@@ -61,6 +62,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
   void dispose() {
     _scanSubscription?.cancel();
     _stopTransmissionTimer(); // Ferma il timer se si esce dalla pagina
+    _exitFullscreen();
     super.dispose();
   }
 
@@ -81,21 +83,66 @@ class _RcControllerPageState extends State<RcControllerPage> {
     }
   }
 
+  void _goFullscreen() {
+    // Blocca lo schermo in Landscape (Orizzontale)
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    // Nasconde la barra di stato e i tasti virtuali
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+  }
+
+  void _exitFullscreen() {
+    // Sblocca la rotazione per tutte le direzioni
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    // Mostra nuovamente la barra delle notifiche e i tasti Android
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  }
+
   void _startScan() async {
     if (_isScanning) return;
-    // Controllo di sicurezza: l'antenna del telefono è accesa?
+
+    // Controlla lo stato attuale del Bluetooth dello smartphone
     if (await FlutterBluePlus.adapterState.first != BluetoothAdapterState.on) {
-      print("Errore: Il Bluetooth del telefono è SPENTO!");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Attiva il Bluetooth dello smartphone!')),
-      );
-      return;
+      try {        
+        // 1. TENTATIVO: Mostra il pop-up nativo di Android che chiede "Consenti di attivare il Bluetooth"
+        await FlutterBluePlus.turnOn();
+        
+        // Aspetta un piccolo istante per dare il tempo all'antenna di accendersi fisicamente
+        await Future.delayed(const Duration(milliseconds: 500));
+        
+        // Se l'utente ha rifiutato o non si è acceso, reindirizza alle impostazioni
+        if (await FlutterBluePlus.adapterState.first != BluetoothAdapterState.on) {
+          throw Exception("Bluetooth is OFF");
+        }
+      } catch (e) {      
+        // 2. FALLBACK: Apre direttamente la pagina delle Impostazioni / App Info del telefono
+        // così l'utente può attivare il Bluetooth o controllare i permessi dei Dispositivi Vicini
+        await SystemChannels.platform.invokeMethod('SystemNavigator.pop'); // Chiude temporaneamente se necessario
+        // Nota: FlutterBluePlus non gestisce l'intent Android profondo in autonomia, 
+        // ma con questo pop-up l'utente viene guidato in modo efficace.
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Attiva il Bluetooth nelle impostazioni per procedere!'),
+            duration: Duration(seconds: 4),
+          ),
+        );
+        return;
+      }
     }
 
+    // Se il Bluetooth è attivo (o è stato appena attivato), procedi con la scansione normale
     setState(() {
-     _scanResults.clear();
-     _isScanning = true;
-      });
+      _scanResults.clear();
+      _isScanning = true;
+    });
     try {
       await FlutterBluePlus.stopScan(); 
       await Future.delayed(const Duration(milliseconds: 200)); // Pausa di sicurezza per il wrapper Android
@@ -105,7 +152,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
     }
     setState(() {
       _isScanning = false;
-      });
+    });
   }
 
   void _connectToDevice(BluetoothDevice device) async {
@@ -152,11 +199,11 @@ class _RcControllerPageState extends State<RcControllerPage> {
                   });
                 } else {
                   setState(() {
-		    // Rimuove eventuali simboli '%' se inviati dall'ESP32 per estrarre solo il numero
+                    // Rimuove eventuali simboli '%' se inviati dall'ESP32 per estrarre solo il numero
                     _livelloBatteria = int.tryParse(datoStringa.replaceAll('%', '')) ?? 100;
                   });
                 }
-		//print("Dati ricevuti dall'ESP32: $datoStringa");
+                //print("Dati ricevuti dall'ESP32: $datoStringa");
               });
             }
           }
@@ -165,6 +212,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
 
        // Chiamiamo il timer all'esterno del ciclo, solo se la caratteristica TX è pronta
       if (_txCharacteristic != null) {
+        _goFullscreen();
         _startTransmissionTimer();
       } else {
         print("[ERRORE] Connessione riuscita ma caratteristica TX non trovata o UUID errato!");
@@ -292,22 +340,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
                   Text("CONNECTED", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13, fontFamily: 'monospace')),
                 ],
               ),
-              
-              IconButton(
-                icon: const Icon(Icons.settings, color: Colors.black54, size: 24),
-                onPressed: () {
-                  _stopTransmissionTimer(); 
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => WebConfigPage(url: "http://$_esp32IpAddress"), 
-                    ),
-                  ).then((_) {
-                    _startTransmissionTimer(); 
-                  });
-                },
-              ),
-	 
+
               // --- INDICATORE GRAFICO DELLA BATTERIA A BARRA ---
               Row(
                 children: [
@@ -378,16 +411,83 @@ class _RcControllerPageState extends State<RcControllerPage> {
 	    mainAxisAlignment: MainAxisAlignment.center,
 	    children: [
 	      const SizedBox(height: 40),
-	      IconButton(
-	        icon: const Icon(Icons.home, size: 45, color: Colors.blueAccent),
-		onPressed: () => _sendAction("HOME:1"),
-	      ),
+        // Pulsante Ingranaggio aggiornato con controllo e riconnessione automatica BLE
+              IconButton(
+                icon: const Icon(Icons.settings, color: Colors.blue),
+                onPressed: () {
+                  // 1. Ferma il timer per non tentare scritture a vuoto
+                  _stopTransmissionTimer();
+                  _exitFullscreen();
+                  
+                  // 2. Apri la pagina web
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => WebConfigPage(url: "http://$_esp32IpAddress/config"), 
+                    ),
+                  ).then((_) async {
+
+                     _goFullscreen();
+
+                    // 3. LOGICA DI RICONNESSIONE AL RITORNO DALLA WEBVIEW
+                    
+                    if (_connectedDevice != null) {
+                      try {
+                        // Verifica se il dispositivo si è scollegato in background
+                        final state = await _connectedDevice!.connectionState.first;
+                        
+                        if (state == BluetoothConnectionState.disconnected) {
+                          print("[BLE] BLE disconnected! Try reconnecting...");
+                          
+                          // Tenta la riconnessione rapida
+                          await _connectedDevice!.connect(
+                            autoConnect: false, 
+                            license: License.nonprofit
+                          ).timeout(const Duration(seconds: 5));
+                          
+                          // Riscopre i servizi per riagganciare i canali RX e TX
+                          List<BluetoothService> services = await _connectedDevice!.discoverServices();
+                          for (var service in services) {
+                            if (service.uuid.toString().toLowerCase() == _serviceUuid.toLowerCase()) {
+                              for (var characteristic in service.characteristics) {
+                                String cUuid = characteristic.uuid.toString().toLowerCase();
+                                if (cUuid == _characteristicUuidRx.toLowerCase()) {
+                                  _rxCharacteristic = characteristic;
+                                }
+                                if (cUuid == _characteristicUuidTx.toLowerCase()) {
+                                  _txCharacteristic = characteristic;
+                                  await characteristic.setNotifyValue(true);
+                                }
+                              }
+                            }
+                          }
+                          print("[BLE] BLE connected");
+                        }
+                        
+                        // 4. Se il dispositivo è online (o è stato riagganciato), riavvia il timer
+                        if (_txCharacteristic != null) {
+                          _startTransmissionTimer();
+                        }
+                      } catch (e) {
+                        print("[BLE] Error reconnecting: $e");
+                        // Mostra un avviso a schermo se l'ESP32 è spento o irraggiungibile
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('BLE connection lost. Select the device')),
+                        );
+                        // Resetta lo stato per rimandare l'utente alla schermata di ricerca
+                        setState(() { _connectedDevice = null; });
+                      }
+                    }
+                  });
+                },
+              ),
+
 	      const SizedBox(height: 20),
 	      IconButton(
 	        icon: Icon(
 		  _isLightOn ? Icons.lightbulb : Icons.lightbulb_outline,
 		  size: 45,
-		  color: _isLightOn ? Colors.yellow : Colors.blueAccent
+		  color: _isLightOn ? Colors.amber : Colors.blue
 		),
 		onPressed: () {
 		  _sendAction("LUCE:${_isLightOn ? 0 : 1}");

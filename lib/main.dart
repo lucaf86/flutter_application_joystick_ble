@@ -4,13 +4,7 @@ import 'rc_controller_page.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  // Blocca lo schermo in Landscape (Orizzontale)
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.landscapeLeft,
-    DeviceOrientation.landscapeRight,
-  ]);
-  // Attiva lo schermo intero totale nascondendo le barre di Android
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+
   runApp(const MyApp());
 }
 
