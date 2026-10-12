@@ -1,9 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'rc_controller_page.dart';
+import 'constants.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+
+  SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
+  ]);
 
   runApp(const MyApp());
 }
@@ -19,7 +26,7 @@ class MyApp extends StatelessWidget {
       themeMode: ThemeMode.light, 
       theme: ThemeData(
         brightness: Brightness.light,
-        scaffoldBackgroundColor: const Color(0xFFF0F2F5), // Sfondo Grigio Chiaro / Bianco Ghiaccio
+        scaffoldBackgroundColor: AppConstants.backgroundColor, // Sfondo Grigio Chiaro / Bianco Ghiaccio
       ),
       //theme: ThemeData.dark().copyWith(
       //  scaffoldBackgroundColor: const Color(0xFF141519), // Grigio scuro di fondo hi-tech

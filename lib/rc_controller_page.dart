@@ -5,6 +5,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter/services.dart';
 import 'raw_joystick.dart';
 import 'web_config_page.dart';
+import 'constants.dart';
 
 class RcControllerPage extends StatefulWidget {
   const RcControllerPage({super.key});
@@ -16,23 +17,20 @@ class RcControllerPage extends StatefulWidget {
 class _RcControllerPageState extends State<RcControllerPage> {
   // Assi dei Joystick (-1.0 a 1.0)
   double _trazione = 0.0; // Speed (Verticale)
-  double _sterzo = 0.0;    // Steering (Orizzontale)
+  double _sterzo = 0.0; // Steering (Orizzontale)
 
   // Canali di controllo ausiliari (Piccoli)
-  double _tilt = 0.0;     // Inclinazione (Orizzontale)
-  double _lift = 0.0;     // Elevazione (Verticale)
+  double _tilt = 0.0; // Inclinazione (Orizzontale)
+  double _lift = 0.0; // Elevazione (Verticale)
 
   bool _isLightOn = false; // Controllato direttamente dal feedback dell'ESP32
-
   String _lastSentData = "";
-//  String _esp32IpAddress = "192.168.4.1"; 
-  String _esp32IpAddress = "192.168.1.227"; 
+  String _esp32IpAddress = AppConstants.defaultIpAddress;
 
   // Timer per l'invio periodico temporizzato (Rate Limiting)
   Timer? _transmissionTimer;
 
   // Configurazione Bluetooth BLE
-
   BluetoothDevice? _connectedDevice;
   BluetoothCharacteristic? _rxCharacteristic;
   BluetoothCharacteristic? _txCharacteristic; 
@@ -43,18 +41,13 @@ class _RcControllerPageState extends State<RcControllerPage> {
   // Variabili per la gestione dinamica della batteria
   int _livelloBatteria = 100; // Valore numerico di default
 
-// UUID del firmware
-  final String _serviceUuid = "fc96f65e-318a-4001-84bd-77e9d12af44b";
-  final String _characteristicUuidRx  = "94b43599-5ea2-41e7-9d99-6ff9b904ae3a";
-  final String _characteristicUuidTx = "04d3552e-b9b3-4be6-a8b4-aa43c4507c4d";
-
   @override
   void initState() {
     super.initState();
     _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
       setState(() {
         _scanResults = results;
-	});
+      });
     });
   }
 
@@ -70,7 +63,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
   void _startTransmissionTimer() {
     _stopTransmissionTimer();
     // Invia i dati aggregati dei joystick in modo fisso ogni 120 millisecondi
-    _transmissionTimer = Timer.periodic(const Duration(milliseconds: 120), (timer) {
+    _transmissionTimer = Timer.periodic(const Duration(milliseconds: AppConstants.transmissionIntervalMs), (timer) {
       _sendJoystickData();
     });
   }
@@ -89,6 +82,13 @@ class _RcControllerPageState extends State<RcControllerPage> {
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
+
+    // Rende trasparenti le barre di sistema in modo che lo sfondo riempia anche la zona della fotocamera
+    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      systemNavigationBarColor: Colors.transparent,
+    ));
+
     // Nasconde la barra di stato e i tasti virtuali
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
@@ -113,7 +113,6 @@ class _RcControllerPageState extends State<RcControllerPage> {
       try {        
         // 1. TENTATIVO: Mostra il pop-up nativo di Android che chiede "Consenti di attivare il Bluetooth"
         await FlutterBluePlus.turnOn();
-        
         // Aspetta un piccolo istante per dare il tempo all'antenna di accendersi fisicamente
         await Future.delayed(const Duration(milliseconds: 500));
         
@@ -124,14 +123,16 @@ class _RcControllerPageState extends State<RcControllerPage> {
       } catch (e) {      
         // 2. FALLBACK: Apre direttamente la pagina delle Impostazioni / App Info del telefono
         // così l'utente può attivare il Bluetooth o controllare i permessi dei Dispositivi Vicini
-        await SystemChannels.platform.invokeMethod('SystemNavigator.pop'); // Chiude temporaneamente se necessario
-        // Nota: FlutterBluePlus non gestisce l'intent Android profondo in autonomia, 
+        await SystemChannels.platform.invokeMethod(
+          'SystemNavigator.pop',
+        ); // Chiude temporaneamente se necessario
+        // Nota: FlutterBluePlus non gestisce l'intent Android profondo in autonomia,
         // ma con questo pop-up l'utente viene guidato in modo efficace.
         
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Attiva il Bluetooth nelle impostazioni per procedere!'),
-            duration: Duration(seconds: 4),
+            duration: Duration(seconds: AppConstants.scanDurationSeconds),
           ),
         );
         return;
@@ -146,7 +147,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
     try {
       await FlutterBluePlus.stopScan(); 
       await Future.delayed(const Duration(milliseconds: 200)); // Pausa di sicurezza per il wrapper Android
-      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 4));
+      await FlutterBluePlus.startScan(timeout: const Duration(seconds: AppConstants.scanDurationSeconds));
     } catch (e) {
       print("Errore scansione BT: $e");
     }
@@ -165,18 +166,18 @@ class _RcControllerPageState extends State<RcControllerPage> {
 
       List<BluetoothService> services = await device.discoverServices();
       for (var service in services) {
-        if (service.uuid.toString().toLowerCase() == _serviceUuid.toLowerCase()) {
+        if (service.uuid.toString().toLowerCase() == AppConstants.serviceUuid.toLowerCase()) {
           for (var characteristic in service.characteristics) {
             String cUuid = characteristic.uuid.toString().toLowerCase();
             // 1. Aggancia la caratteristica di RICEZIONE dell'ESP32 (Scrittura del telefono)
-            if (cUuid == _characteristicUuidTx.toLowerCase()) {
+            if (cUuid == AppConstants.characteristicUuidTx.toLowerCase()) {
               setState(() {
                 _txCharacteristic = characteristic;
               });
               print("Caratteristica TX (Scrittura) Agganciata!");
             }
             // 2. Aggancia la caratteristica di TRASMISSIONE dell'ESP32 (Ascolto del telefono)
-            if (cUuid == _characteristicUuidRx.toLowerCase()) {
+            if (cUuid == AppConstants.characteristicUuidRx.toLowerCase()) {
               setState(() {
                 _rxCharacteristic = characteristic;
               });
@@ -184,7 +185,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
               // Se l'ESP32 invia dati indietro (es. stato batteria, ...), li leggi qui:
               await characteristic.setNotifyValue(true);
               
-              // ROUTINE DI RICEZIONE 
+              // ROUTINE DI RICEZIONE
               characteristic.onValueReceived.listen((value) {
                 String datoStringa = utf8.decode(value).trim();
                 datoStringa = datoStringa.replaceAll('%', '');
@@ -211,7 +212,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
         }
       }
 
-       // Chiamiamo il timer all'esterno del ciclo, solo se la caratteristica TX è pronta
+      // Chiamiamo il timer all'esterno del ciclo, solo se la caratteristica TX è pronta
       if (_txCharacteristic != null) {
         //_goFullscreen(); //  spostato a inizio funzione
         _startTransmissionTimer();
@@ -237,7 +238,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
     int liftInt = (_lift * 100).round();
 
     // Formato: L=Trazione, R=Sterzo, T=Tilt, V=leVazione (Elevazione)
-     // Stringa super compatta (es: "L:85,R:-30,T:0,V:45")
+    // Stringa super compatta (es: "L:85,R:-30,T:0,V:45")
     String dataString = "L:$trazioneInt,R:$sterzoInt,T:$tiltInt,V:$liftInt";
     //String dataString = "L:${_trazione.toStringAsFixed(2)},R:${_sterzo.toStringAsFixed(2)},T:${_tilt.toStringAsFixed(2)},V:${_lift.toStringAsFixed(2)}";
     // Se la stringa è identica (es: muletto fermo o stick bloccati nella stessa posizione), salta l'invio
@@ -265,7 +266,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
   // Calcola il colore della batteria dinamico in base alle soglie richieste
   Color _getBatteryColor(int valore) {
     if (valore >= 0 && valore <= 25) return Colors.red;
-    if (valore > 25 && valore <= 70) return Colors.orange;
+    if (valore > 25 && valore <= 60) return Colors.orange;
     return Colors.green;
   }
 
@@ -273,7 +274,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       // Forza lo sfondo chiaro su tutto lo schermo
-      backgroundColor: const Color(0xFFF0F2F5),
+      backgroundColor: AppConstants.backgroundColor,
       body: _connectedDevice == null 
           ? SafeArea(child: _buildConnectionScreen()) 
           : _buildForkliftDashboard(), // Rimosso SafeArea per permettere lo schermo intero totale
@@ -308,8 +309,17 @@ class _RcControllerPageState extends State<RcControllerPage> {
                 color: Colors.white,
                 elevation: 2,
                 child: ListTile(
-                  title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
-                  subtitle: Text(device.remoteId.toString(), style: const TextStyle(color: Colors.black45)),
+                  title: Text(
+                    name,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black,
+                    ),
+                  ),
+                  subtitle: Text(
+                    device.remoteId.toString(),
+                    style: const TextStyle(color: Colors.black45),
+                  ),
                   trailing: const Icon(Icons.link, color: Colors.blue),
                   onTap: () => _connectToDevice(device),
                 ),
@@ -325,29 +335,57 @@ class _RcControllerPageState extends State<RcControllerPage> {
   Widget _buildForkliftDashboard() {
     return Stack(
       children: [
-        // Barra superiore: Segnale di Connessione e Livello Batteria DINAMICO
+        // ================= LATO SINISTRO (SFALSATO OTTIMIZZATO) =================
+        // 1. Tilt (Piccolo, Alto) -> Spostato più in alto (top: 25) e ingrandito a 140
         Positioned(
-          top: 10,
-          left: 20,
-          right: 20,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Row(
-                children: [
-                  Icon(Icons.wifi, color: Colors.green, size: 12),
-                  SizedBox(width: 8),
-                  Text("CONNECTED", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13, fontFamily: 'monospace')),
-                ],
-              ),
+          left: AppConstants.smallJoystickHorizontalPadding,
+          top: AppConstants.smallJoystickTopPadding,
+          child: RawJoystick(
+            joystickSize: AppConstants.smallJoystickSize, 
+            thumbSize: AppConstants.smallJoystickThumbSize, 
+            value: _tilt, 
+            isVertical: false, 
+            color: AppConstants.smallJoystickColor, 
+            embeddedLabel: "T", 
+            onChanged: (val) {
+              setState(() {
+                _tilt = val;
+              });
+            },
+          ),
+        ),
 
-              // --- INDICATORE GRAFICO DELLA BATTERIA A BARRA ---
+        // 2. Steering (Grande, Basso) -> Allontanato verso l'esterno (left: 60) grazie allo spazio verticale guadagnato
+        Positioned(
+          left: AppConstants.largeJoystickHorizontalPadding,
+          bottom: AppConstants.largeJoystickBottomPadding,
+          child: RawJoystick(
+            joystickSize: AppConstants.largeJoystickSize, 
+            thumbSize: AppConstants.largeJoystickThumbSize, 
+            value: _sterzo, 
+            isVertical: false, 
+            color: AppConstants.largeJoystickColor, 
+            embeddedLabel: "S", 
+            onChanged: (val) {
+              setState(() {
+                _sterzo = val;
+              });
+            },
+          ),
+        ),
+        // ================= COLONNA CENTRALE (Batteria + Ingranaggio + Luci) =================
+        Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // La barra della batteria ora si trova qui in alto al centro del cruscotto
               Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   // Contenitore esterno della batteria (Bordo nero/grigio)
                   Container(
-                    width: 55,
-                    height: 15,
+                    width: AppConstants.batteryWidth,
+                    height: AppConstants.batteryHeight,
                     padding: const EdgeInsets.all(2),
                     decoration: BoxDecoration(
                       color: Colors.white24,
@@ -374,88 +412,63 @@ class _RcControllerPageState extends State<RcControllerPage> {
                     height: 10,
                     decoration: const BoxDecoration(
                       color: Colors.black54,
-                      //borderRadius: BorderSide.none == null ? BorderRadius.only(topRight: Radius.circular(2), bottomRight: Radius.circular(2)) : null,
-                      borderRadius: BorderRadius.only(topRight: Radius.circular(2), bottomRight: Radius.circular(2)),
+                      borderRadius: BorderRadius.only(
+                        topRight: Radius.circular(2),
+                        bottomRight: Radius.circular(2),
+                      ),
                     ),
                   ),
                 ],
               ),
-            ],
-          ),
-        ),
-        // ================= LATO SINISTRO (SFALSATO COERENTE) =================
-        // 1. Tilt (Piccolo, Alto) -> Esterno (left: 20, top: 45)
-        Positioned(
-          left: 20,
-          top: 45,
-          child: RawJoystick(
-            joystickSize: 130.0, thumbSize: 46.0, value: _tilt, isVertical: false, color: Colors.green, 
-            embeddedLabel: "T", 
-            onChanged: (val) { setState(() { _tilt = val; }); }
-          ),
-        ),
-
-        // 2. Steering (Grande, Basso) -> Rientrato a specchio (left: 110, bottom: 15) Dimensione aumentata a 180
-        Positioned(
-          left: 110,
-          bottom: 15,
-          child: RawJoystick(
-            joystickSize: 180.0, thumbSize: 64.0, value: _sterzo, isVertical: false, color: Colors.amber, 
-            embeddedLabel: "S", 
-            onChanged: (val) { setState(() { _sterzo = val; }); }
-           ),
-        ),
-        // ================= SEZIONE CENTRALE (Pulsanti Home e Luci) =================
-	Center(
-	  child: Column(
-	    mainAxisAlignment: MainAxisAlignment.center,
-	    children: [
-	      const SizedBox(height: 40),
-        // Pulsante Ingranaggio aggiornato con controllo e riconnessione automatica BLE
+              const SizedBox(height: 25),
+              // Pulsante Impostazioni (Ingranaggio)
               IconButton(
-                icon: const Icon(Icons.settings, color: Colors.blue, size: 45),
+                icon: const Icon(
+                  Icons.settings,
+                  color: AppConstants.centerButtonColor,
+                  size: AppConstants.centerButtonIconSize,
+                ),
                 onPressed: () {
                   // 1. Ferma il timer per non tentare scritture a vuoto
                   _stopTransmissionTimer();
                   _exitFullscreen();
-
                   // 2. Apri la pagina web
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => WebConfigPage(url: "http://$_esp32IpAddress/config"), 
+                      builder: (context) => WebConfigPage(
+                        url: "http://$_esp32IpAddress${AppConstants.webConfigPath}",
+                      ),
                     ),
                   ).then((_) async {
-
-                     _goFullscreen();
+                    _goFullscreen();
 
                     // 3. LOGICA DI RICONNESSIONE AL RITORNO DALLA WEBVIEW
-                    
                     if (_connectedDevice != null) {
                       try {
                         // Verifica se il dispositivo si è scollegato in background
                         final state = await _connectedDevice!.connectionState.first;
-                        
+
                         if (state == BluetoothConnectionState.disconnected) {
                           print("[BLE] BLE disconnected! Try reconnecting...");
-                                           
+
                           // Tenta la riconnessione rapida
                           await _connectedDevice!.connect(
-                            autoConnect: false, 
-                            license: License.nonprofit
-                          ).timeout(const Duration(seconds: 5));
-                          
+                                autoConnect: false,
+                                license: License.nonprofit
+                              ).timeout(const Duration(seconds: 5));
+
                           // Riscopre i servizi per riagganciare i canali RX e TX
                           List<BluetoothService> services = await _connectedDevice!.discoverServices();
                           for (var service in services) {
-                            if (service.uuid.toString().toLowerCase() == _serviceUuid.toLowerCase()) {
+                            if (service.uuid.toString().toLowerCase() == AppConstants.serviceUuid.toLowerCase()) {
                               for (var characteristic in service.characteristics) {
                                 String cUuid = characteristic.uuid.toString().toLowerCase();
-                                if (cUuid == _characteristicUuidRx.toLowerCase()) {
+                                if (cUuid == AppConstants.characteristicUuidRx.toLowerCase()) {
                                   _rxCharacteristic = characteristic;
                                   await characteristic.setNotifyValue(true);
                                 }
-                                if (cUuid == _characteristicUuidTx.toLowerCase()) {
+                                if (cUuid == AppConstants.characteristicUuidTx.toLowerCase()) {
                                   _txCharacteristic = characteristic;
                                 }
                               }
@@ -463,7 +476,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
                           }
                           print("[BLE] BLE connected");
                         }
-                        
+
                         // 4. Se il dispositivo è online (o è stato riagganciato), riavvia il timer
                         if (_txCharacteristic != null) {
                           _startTransmissionTimer();
@@ -475,46 +488,67 @@ class _RcControllerPageState extends State<RcControllerPage> {
                           const SnackBar(content: Text('BLE connection lost. Select the device')),
                         );
                         // Resetta lo stato per rimandare l'utente alla schermata di ricerca
-                        setState(() { _connectedDevice = null; });
+                        setState(() {
+                          _connectedDevice = null;
+                        });
                       }
                     }
                   });
                 },
               ),
-
-	      const SizedBox(height: 20),
-	      IconButton(
-	        icon: Icon(
-		  _isLightOn ? Icons.lightbulb : Icons.lightbulb_outline,
-		  size: 45,
-		  color: _isLightOn ? Colors.amber : Colors.blue
-		),
-		onPressed: () {
-		  _sendAction("LUCE:${_isLightOn ? 0 : 1}");
-		},
-	      ),
-	    ],
-	  ),
-	),
-        // ================= LATO DESTRO (SFALSATO COERENTE) =================
-        // 3. Lift (Piccolo, Alto) -> Esterno (right: 20, top: 45) Dimensione aumentata a 120
-        Positioned(
-          right: 20,
-          top: 45,
-          child: RawJoystick(
-            joystickSize: 130.0, thumbSize: 46.0, value: _lift, isVertical: true, color: Colors.green,
-            embeddedLabel: "L",
-            onChanged: (val) { setState(() { _lift = val * -1; }); }
+              
+              const SizedBox(height: 15),
+              // Pulsante Luci
+              IconButton(
+                icon: Icon(
+                  _isLightOn ? Icons.lightbulb : Icons.lightbulb_outline,
+                  size: AppConstants.centerButtonIconSize,
+                  color: _isLightOn
+                      ? AppConstants.centerButtonActiveColor
+                      : AppConstants.centerButtonColor,
+                ),
+                onPressed: () {
+                  _sendAction("LUCE:${_isLightOn ? 0 : 1}");
+                },
+              ),
+            ],
           ),
         ),
-        // 4. Speed (Grande, Basso) -> Rientrato a specchio (right: 110, bottom: 15) Dimensione aumentata a 180
+        // ================= LATO DESTRO (SFALSATO OTTIMIZZATO) =================
+        // 3. Lift (Piccolo, Alto) -> Spostato più in alto (top: 25) e ingrandito a 140
         Positioned(
-          right: 110,
-          bottom: 15,
+          right: AppConstants.smallJoystickHorizontalPadding,
+          top: AppConstants.smallJoystickTopPadding,
           child: RawJoystick(
-            joystickSize: 180.0, thumbSize: 64.0, value: _trazione, isVertical: true, color: Colors.amber,
+            joystickSize: AppConstants.smallJoystickSize,
+            thumbSize: AppConstants.smallJoystickThumbSize,
+            value: _lift,
+            isVertical: true,
+            color: AppConstants.smallJoystickColor,
+            embeddedLabel: "L",
+            onChanged: (val) {
+              setState(() {
+                _lift = val * -1;
+              });
+            },
+          ),
+        ),
+        // 4. Speed (Grande, Basso) -> Allontanato verso l'esterno (right: 60) grazie allo spazio verticale guadagnato
+        Positioned(
+          right: AppConstants.largeJoystickHorizontalPadding,
+          bottom: AppConstants.largeJoystickBottomPadding,
+          child: RawJoystick(
+            joystickSize: AppConstants.largeJoystickSize,
+            thumbSize: AppConstants.largeJoystickThumbSize,
+            value: _trazione,
+            isVertical: true,
+            color: AppConstants.largeJoystickColor,
             embeddedLabel: "M",
-            onChanged: (val) { setState(() { _trazione = val * -1; }); }
+            onChanged: (val) {
+              setState(() {
+                _trazione = val * -1;
+              });
+            },
           ),
         ),
       ],
