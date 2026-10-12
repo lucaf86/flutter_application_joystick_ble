@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 import 'raw_joystick.dart';
 import 'web_config_page.dart';
 
-
 class RcControllerPage extends StatefulWidget {
   const RcControllerPage({super.key});
 
@@ -48,6 +47,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
   final String _serviceUuid = "fc96f65e-318a-4001-84bd-77e9d12af44b";
   final String _characteristicUuidRx  = "94b43599-5ea2-41e7-9d99-6ff9b904ae3a";
   final String _characteristicUuidTx = "04d3552e-b9b3-4be6-a8b4-aa43c4507c4d";
+
   @override
   void initState() {
     super.initState();
@@ -157,6 +157,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
 
   void _connectToDevice(BluetoothDevice device) async {
     try {
+      _goFullscreen(); // Forza l'orientamento orizzontale istantaneo durante la connessione
       await device.connect(autoConnect: false, license: License.nonprofit);
       setState(() {
         _connectedDevice = device;
@@ -212,13 +213,16 @@ class _RcControllerPageState extends State<RcControllerPage> {
 
        // Chiamiamo il timer all'esterno del ciclo, solo se la caratteristica TX è pronta
       if (_txCharacteristic != null) {
-        _goFullscreen();
+        //_goFullscreen(); //  spostato a inizio funzione
         _startTransmissionTimer();
       } else {
-        print("[ERRORE] Connessione riuscita ma caratteristica TX non trovata o UUID errato!");
+        _exitFullscreen();
+        setState(() { _connectedDevice = null; });
+        print("[ERRORE] Caratteristica TX non trovata!");
       }
-
     } catch (e) {
+      _exitFullscreen();
+      setState(() { _connectedDevice = null; });
       print("Errore connessione BT: $e");
     }
   }
@@ -260,13 +264,9 @@ class _RcControllerPageState extends State<RcControllerPage> {
 
   // Calcola il colore della batteria dinamico in base alle soglie richieste
   Color _getBatteryColor(int valore) {
-    if (valore >= 0 && valore <= 25) {
-      return Colors.red; // Tra 0 e 25 -> Rosso
-    } else if (valore > 25 && valore <= 70) {
-      return Colors.orange; // Tra 25 e 70 -> Giallo/Arancione
-    } else {
-      return Colors.green; // Tra 70 e 100 -> Verde
-    }
+    if (valore >= 0 && valore <= 25) return Colors.red;
+    if (valore > 25 && valore <= 70) return Colors.orange;
+    return Colors.green;
   }
 
   @override
@@ -389,7 +389,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
           left: 20,
           top: 45,
           child: RawJoystick(
-            joystickSize: 120.0, thumbSize: 46.0, value: _tilt, isVertical: false, color: Colors.green, 
+            joystickSize: 130.0, thumbSize: 46.0, value: _tilt, isVertical: false, color: Colors.green, 
             embeddedLabel: "T", 
             onChanged: (val) { setState(() { _tilt = val; }); }
           ),
@@ -413,12 +413,12 @@ class _RcControllerPageState extends State<RcControllerPage> {
 	      const SizedBox(height: 40),
         // Pulsante Ingranaggio aggiornato con controllo e riconnessione automatica BLE
               IconButton(
-                icon: const Icon(Icons.settings, color: Colors.blue),
+                icon: const Icon(Icons.settings, color: Colors.blue, size: 45),
                 onPressed: () {
                   // 1. Ferma il timer per non tentare scritture a vuoto
                   _stopTransmissionTimer();
                   _exitFullscreen();
-                  
+
                   // 2. Apri la pagina web
                   Navigator.push(
                     context,
@@ -438,7 +438,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
                         
                         if (state == BluetoothConnectionState.disconnected) {
                           print("[BLE] BLE disconnected! Try reconnecting...");
-                          
+                                           
                           // Tenta la riconnessione rapida
                           await _connectedDevice!.connect(
                             autoConnect: false, 
@@ -453,10 +453,10 @@ class _RcControllerPageState extends State<RcControllerPage> {
                                 String cUuid = characteristic.uuid.toString().toLowerCase();
                                 if (cUuid == _characteristicUuidRx.toLowerCase()) {
                                   _rxCharacteristic = characteristic;
+                                  await characteristic.setNotifyValue(true);
                                 }
                                 if (cUuid == _characteristicUuidTx.toLowerCase()) {
                                   _txCharacteristic = characteristic;
-                                  await characteristic.setNotifyValue(true);
                                 }
                               }
                             }
@@ -470,7 +470,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
                         }
                       } catch (e) {
                         print("[BLE] Error reconnecting: $e");
-                        // Mostra un avviso a schermo se l'ESP32 è spento o irraggiungibile
+                        _exitFullscreen();
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(content: Text('BLE connection lost. Select the device')),
                         );
@@ -502,7 +502,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
           right: 20,
           top: 45,
           child: RawJoystick(
-            joystickSize: 120.0, thumbSize: 46.0, value: _lift, isVertical: true, color: Colors.green,
+            joystickSize: 130.0, thumbSize: 46.0, value: _lift, isVertical: true, color: Colors.green,
             embeddedLabel: "L",
             onChanged: (val) { setState(() { _lift = val * -1; }); }
           ),
