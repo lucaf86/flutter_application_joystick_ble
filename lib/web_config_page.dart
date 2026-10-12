@@ -17,8 +17,20 @@ class _WebConfigPageState extends State<WebConfigPage> {
     super.initState();
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0xFFF0F2F5))
-      ..loadRequest(Uri.parse(widget.url));
+      ..setBackgroundColor(const Color(0xFFF0F2F5));
+
+    // 1. Svuota la cache locale memorizzata dall'app prima di caricare la pagina
+    _controller!.clearCache();
+
+    // 2. Forza la richiesta HTTP a ignorare la cache lato server/client con gli header No-Cache
+    _controller!.loadRequest(
+      Uri.parse(widget.url),
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      },
+    );
   }
 
   @override
