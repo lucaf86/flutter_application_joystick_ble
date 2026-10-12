@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'constants.dart';
 
 class RawJoystick extends StatelessWidget {
   final double joystickSize;
@@ -20,13 +21,14 @@ class RawJoystick extends StatelessWidget {
     required this.onChanged,
   });
 
-  // Spostato qui per essere accessibile correttamente all'interno della classe
-  bool isSmallJoystick(double size) => size < 130;
+  bool isSmallJoystick(double size) => size < AppConstants.largeJoystickSize;
 
   @override
   Widget build(BuildContext context) {
+    // Calcola dinamicamente la dimensione delle frecce in base alla grandezza del joystick
+    final double iconSize = isSmallJoystick(joystickSize) ? 33.0 : 42.0;
+
     return GestureDetector(
-        // RISOLTO: Intercettamento nativo direzionale bloccato per asse per bypassare i gesti di Android
       onVerticalDragUpdate: isVertical ? (details) {
         double center = joystickSize / 2;
         double offset = details.localPosition.dy;
@@ -53,23 +55,36 @@ class RawJoystick extends StatelessWidget {
         child: Stack(
           alignment: Alignment.center,
           children: [
-                // Indicatori a freccia di direzione
+            // Frecce direzionali distanziate
             isVertical
                 ? const Column(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Padding(padding: EdgeInsets.only(top: 4), child: Icon(Icons.arrow_drop_up, color: Colors.black12, size: 18)),
-                      Padding(padding: EdgeInsets.only(bottom: 4), child: Icon(Icons.arrow_drop_down, color: Colors.black12, size: 18)),
+                      Padding(
+                        padding: EdgeInsets.only(top: 6), 
+                        child: Icon(Icons.arrow_drop_up, color: Colors.black26, size: iconSize)
+                      ),
+                      Padding(
+                        padding: EdgeInsets.only(bottom: 6), 
+                        child: Icon(Icons.arrow_drop_down, color: Colors.black26, size: iconSize)
+                      ),
                     ],
                   )
                 : const Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Padding(padding: EdgeInsets.only(left: 4), child: Icon(Icons.arrow_left, color: Colors.black12, size: 18)),
-                      Padding(padding: EdgeInsets.only(right: 4), child: Icon(Icons.arrow_right, color: Colors.black12, size: 18)),
+                      Padding(
+                        padding: EdgeInsets.only(left: 6), 
+                        child: Icon(Icons.arrow_left, color: Colors.black26, size: iconSize)
+                      ),
+                      Padding(
+                        padding: EdgeInsets.only(right: 6), 
+                        child: Icon(Icons.arrow_right, color: Colors.black26, size: iconSize)
+                      ),
                     ],
                   ),
-                  // Pomello mobile (Thumb) completo di ombra 3D e mirino centrale
+
+            // Pomello mobile (Thumb) con la lettera dell'asse
             Align(
               alignment: isVertical ? Alignment(0, value * -1) : Alignment(value, 0),
               child: Container(
@@ -85,8 +100,8 @@ class RawJoystick extends StatelessWidget {
                   child: Text(
                     embeddedLabel,
                     style: TextStyle(
-                            color: const Color.fromARGB(103, 0, 0, 0),
-                            fontSize: isSmallJoystick(joystickSize) ? 14 : 18,
+                      color: const Color.fromARGB(103, 0, 0, 0),
+                      fontSize: isSmallJoystick(joystickSize) ? 14 : 18,
                       fontWeight: FontWeight.w900,
                       fontFamily: 'monospace',
                     ),
