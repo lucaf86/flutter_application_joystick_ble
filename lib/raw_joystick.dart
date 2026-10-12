@@ -28,20 +28,27 @@ class RawJoystick extends StatelessWidget {
     // Calcola dinamicamente la dimensione delle frecce in base alla grandezza del joystick
     final double iconSize = isSmallJoystick(joystickSize) ? 33.0 : 42.0;
 
+    // Il centro geometrico dell'anello di fondo grigio
+    double centroAnello = joystickSize / 2;
+    
+    // Definiamo il raggio massimo virtuale di calcolo
+    // Questo è il limite oltre cui il dato inviato si satura a 100 o -100
+    double raggioMassimoCalcolo = centroAnello * 0.75; 
+
     return GestureDetector(
       onVerticalDragUpdate: isVertical ? (details) {
-        double center = joystickSize / 2;
-        double offset = details.localPosition.dy;
-        double normalized = (offset - center) / center;
-        onChanged(normalized.clamp(-1.0, 1.0));
+        double offsetDito = details.localPosition.dy;
+        double distanzaDalCentro = offsetDito - centroAnello;
+        // Calcolo della coordinata normalizzata
+        double normalized = SampleMath.compute(distanzaDalCentro, raggioMassimoCalcolo);
+        onChanged(normalized);
       } : null,
       onHorizontalDragUpdate: !isVertical ? (details) {
-        double center = joystickSize / 2;
-        double offset = details.localPosition.dx;
-        double normalized = (offset - center) / center;
-        onChanged(normalized.clamp(-1.0, 1.0));
+        double offsetDito = details.localPosition.dx;
+        double distanzaDalCentro = offsetDito - centroAnello;
+        double normalized = SampleMath.compute(distanzaDalCentro, raggioMassimoCalcolo);
+        onChanged(normalized);
       } : null,
-        // RISOLTO: Aggiunto il parametro (_) per renderlo compatibile con GestureDragEndCallback
       onVerticalDragEnd: isVertical ? (_) => onChanged(0.0) : null,
       onHorizontalDragEnd: !isVertical ? (_) => onChanged(0.0) : null,
       child: Container(
@@ -54,39 +61,41 @@ class RawJoystick extends StatelessWidget {
         ),
         child: Stack(
           alignment: Alignment.center,
+          clipBehavior: Clip.none, // FONDAMENTALE: Impedisce a Flutter di tagliare il pomello quando esce dal cerchio grigio!
           children: [
-            // Frecce direzionali distanziate
+            // Frecce direzionali di sottofondo nello stile industriale
             isVertical
-                ? const Column(
+                ? Column(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Padding(
-                        padding: EdgeInsets.only(top: 6), 
+                        padding: const EdgeInsets.only(top: 6), 
                         child: Icon(Icons.arrow_drop_up, color: Colors.black26, size: iconSize)
                       ),
                       Padding(
-                        padding: EdgeInsets.only(bottom: 6), 
+                        padding: const EdgeInsets.only(bottom: 6), 
                         child: Icon(Icons.arrow_drop_down, color: Colors.black26, size: iconSize)
                       ),
                     ],
                   )
-                : const Row(
+                : Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Padding(
-                        padding: EdgeInsets.only(left: 6), 
+                        padding: const EdgeInsets.only(left: 6), 
                         child: Icon(Icons.arrow_left, color: Colors.black26, size: iconSize)
                       ),
                       Padding(
-                        padding: EdgeInsets.only(right: 6), 
+                        padding: const EdgeInsets.only(right: 6), 
                         child: Icon(Icons.arrow_right, color: Colors.black26, size: iconSize)
                       ),
                     ],
                   ),
 
-            // Pomello mobile (Thumb) con la lettera dell'asse
+            // Il pomello mobile (Thumb) sbloccato. Può debordare liberamente all'esterno.
             Align(
-              alignment: isVertical ? Alignment(0, value * -1) : Alignment(value, 0),
+              // Moltiplichiamo l'allineamento visivo per permettere un'escursione visiva più ampia oltre l'anello
+              alignment: isVertical ? Alignment(0, value * -1.4) : Alignment(value * 1.4, 0),
               child: Container(
                 width: thumbSize,
                 height: thumbSize,
@@ -113,5 +122,13 @@ class RawJoystick extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+// Classe di utilità per isolare i calcoli matematici di saturazione
+class SampleMath {
+  static double compute(double distanza, double raggioMassimo) {
+    double risultato = distanza / raggioMassimo;
+    return risultato.clamp(-1.0, 1.0);
   }
 }
