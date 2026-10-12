@@ -25,12 +25,12 @@ class AppConstants {
   static const double smallJoystickThumbSize = 60.0;
 
   // --- DIMENSIONI JOYSTICK GRANDI (STEER / SPEED) ---
-  static const double largeJoystickSize = 185.0;
+  static const double largeJoystickSize = 180.0;
   static const double largeJoystickThumbSize = 80.0;
 
   // --- POSIZIONAMENTO JOYSTICK ---
   static const double smallJoystickHorizontalPadding = 10.0;
-  static const double largeJoystickHorizontalPadding = 75.0;
+  static const double largeJoystickHorizontalPadding = 72.0;
   static const double smallJoystickTopPadding = 20.0;
   static const double largeJoystickBottomPadding = 20.0;
 

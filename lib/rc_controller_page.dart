@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart'; 
 import 'raw_joystick.dart';
 import 'web_config_page.dart';
 import 'constants.dart';
@@ -25,7 +26,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
 
   bool _isLightOn = false; // Controllato direttamente dal feedback dell'ESP32
   String _lastSentData = "";
-  String _esp32IpAddress = AppConstants.defaultIpAddress;
+  String _esp32IpAddress = AppConstants.defaultIpAddress; 
 
   // Timer per l'invio periodico temporizzato (Rate Limiting)
   Timer? _transmissionTimer;
@@ -41,13 +42,32 @@ class _RcControllerPageState extends State<RcControllerPage> {
   // Variabili per la gestione dinamica della batteria
   int _livelloBatteria = 100; // Valore numerico di default
 
+  String? _savedMacAddress; // Memorizza temporaneamente il MAC caricato all'avvio
+
   @override
   void initState() {
     super.initState();
+    
+    // 1. Ascolta i risultati della scansione normale
     _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
-      setState(() {
-        _scanResults = results;
-      });
+      setState(() { _scanResults = results; });
+      
+      // Auto-connessione automatica se c'è un indirizzo salvato in memoria
+       if (_savedMacAddress != null && _connectedDevice == null) {
+        for (var result in results) {
+          if (result.device.remoteId.toString() == _savedMacAddress) {
+            //print("[AUTO-CONNECT] Connecting to saved devide (${result.device.platformName})...");
+            FlutterBluePlus.stopScan();
+            _connectToDevice(result.device);
+            break;
+          }
+        }
+      }
+    });
+
+    // Avvia il controllo dopo un piccolo ritardo per permettere al motore dell'app di svegliarsi
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+    _checkSavedDevice();
     });
   }
 
@@ -59,7 +79,41 @@ class _RcControllerPageState extends State<RcControllerPage> {
     super.dispose();
   }
 
-  // Avvia il loop di trasmissione periodica appena l'ESP32 è connesso
+  // Controlla se c'è un device memorizzato nelle preferenze del telefono
+  void _checkSavedDevice() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedMac = prefs.getString(AppConstants.prefMacAddressKey);
+    
+    if (savedMac != null && savedMac.isNotEmpty) {
+      setState(() { _savedMacAddress = savedMac; });
+      //print("[MEMORIA] MAC Address trovato: $savedMac. Attivo scansione...");
+    }
+    _startScan(); // Avvia in ogni caso la scansione delle antenne
+  }
+
+  // Cancella la memoria, scollega il BLE e torna alla ricerca pulita
+  void _forgetAndDisconnectDevice() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(AppConstants.prefMacAddressKey);
+    
+    if (_connectedDevice != null) {
+      await _connectedDevice!.disconnect();
+    }
+
+    _exitFullscreen();
+    _stopTransmissionTimer();
+
+    setState(() {
+      _connectedDevice = null;
+      _savedMacAddress = null;
+      _txCharacteristic = null;
+      _rxCharacteristic = null;
+      _scanResults.clear();
+    });
+    
+    _startScan(); // Fai ripartire la scansione automatica sui dispositivi liberi
+  }
+
   void _startTransmissionTimer() {
     _stopTransmissionTimer();
     // Invia i dati aggregati dei joystick in modo fisso ogni 120 millisecondi
@@ -70,7 +124,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
 
   void _stopTransmissionTimer() {
     if (_transmissionTimer != null) {
-      print("[TIMER] Arresto della routine periodica.");
+      //print("[TIMER] Arresto della routine periodica.");
       _transmissionTimer?.cancel();
       _transmissionTimer = null;
     }
@@ -160,10 +214,15 @@ class _RcControllerPageState extends State<RcControllerPage> {
     try {
       _goFullscreen(); // Forza l'orientamento orizzontale istantaneo durante la connessione
       await device.connect(autoConnect: false, license: License.nonprofit);
-      setState(() {
-        _connectedDevice = device;
-      });
 
+      // FORZATURA SCRITTURA CRITICA: Memorizza subito l'indirizzo MAC
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(AppConstants.prefMacAddressKey, device.remoteId.toString());
+
+      setState(() { 
+        _connectedDevice = device; 
+        _savedMacAddress = device.remoteId.toString();
+      });
       List<BluetoothService> services = await device.discoverServices();
       for (var service in services) {
         if (service.uuid.toString().toLowerCase() == AppConstants.serviceUuid.toLowerCase()) {
@@ -174,14 +233,14 @@ class _RcControllerPageState extends State<RcControllerPage> {
               setState(() {
                 _txCharacteristic = characteristic;
               });
-              print("Caratteristica TX (Scrittura) Agganciata!");
+              //print("Caratteristica TX (Scrittura) Agganciata!");
             }
             // 2. Aggancia la caratteristica di TRASMISSIONE dell'ESP32 (Ascolto del telefono)
             if (cUuid == AppConstants.characteristicUuidRx.toLowerCase()) {
               setState(() {
                 _rxCharacteristic = characteristic;
               });
-              print("Caratteristica RX (Notifiche) Agganciata!");
+              //print("Caratteristica RX (Notifiche) Agganciata!");
               // Se l'ESP32 invia dati indietro (es. stato batteria, ...), li leggi qui:
               await characteristic.setNotifyValue(true);
               
@@ -241,7 +300,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
     // Stringa super compatta (es: "L:85,R:-30,T:0,V:45")
     String dataString = "L:$trazioneInt,R:$sterzoInt,T:$tiltInt,V:$liftInt";
     //String dataString = "L:${_trazione.toStringAsFixed(2)},R:${_sterzo.toStringAsFixed(2)},T:${_tilt.toStringAsFixed(2)},V:${_lift.toStringAsFixed(2)}";
-    // Se la stringa è identica (es: muletto fermo o stick bloccati nella stessa posizione), salta l'invio
+    // Se la stringa è identica (es: fermo o stick bloccati nella stessa posizione), salta l'invio
     if (dataString == _lastSentData) return;
     _lastSentData = dataString;
 
@@ -249,7 +308,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
       //print("BLE send string: $dataString");
       await _txCharacteristic!.write(utf8.encode(dataString), withoutResponse: true);
     } catch (e) {
-      print("Errore trasmissione periodica: $e");
+      print("Errore trasmissione periodica BLE: $e");
     }
   }
 
@@ -298,35 +357,48 @@ class _RcControllerPageState extends State<RcControllerPage> {
           ],
         ),
         if (_isScanning) const LinearProgressIndicator(color: Colors.blue),
-        Expanded(
-          child: ListView.builder(
-            itemCount: _scanResults.length,
-            itemBuilder: (context, index) {
-              final device = _scanResults[index].device;
-              final name = device.platformName.isNotEmpty ? device.platformName : "Dispositivo Sconosciuto";
-              return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 40, vertical: 6),
-                color: Colors.white,
-                elevation: 2,
-                child: ListTile(
-                  title: Text(
-                    name,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black,
+      Expanded(
+        child: _savedMacAddress != null
+            ? Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const CircularProgressIndicator(color: Colors.blue),
+                    const SizedBox(height: 20),
+                    Text(
+                      "Connessione al device salvato...\n($_savedMacAddress)",
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.bold),
                     ),
-                  ),
-                  subtitle: Text(
-                    device.remoteId.toString(),
-                    style: const TextStyle(color: Colors.black45),
-                  ),
-                  trailing: const Icon(Icons.link, color: Colors.blue),
-                  onTap: () => _connectToDevice(device),
+                    const SizedBox(height: 30),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade50),
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      label: const Text("Annulla e cerca altri", style: TextStyle(color: Colors.red)),
+                      onPressed: _forgetAndDisconnectDevice,
+                    )
+                  ],
                 ),
-              );
-            },
-          ),
-        ),
+              )
+            : ListView.builder(
+                itemCount: _scanResults.length,
+                itemBuilder: (context, index) {
+                  final device = _scanResults[index].device;
+                  final name = device.platformName.isNotEmpty ? device.platformName : "Dispositivo Sconosciuto";
+                  return Card(
+                    margin: const EdgeInsets.symmetric(horizontal: 40, vertical: 6),
+                    color: Colors.white,
+                    elevation: 2,
+                    child: ListTile(
+                      title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
+                      subtitle: Text(device.remoteId.toString(), style: const TextStyle(color: Colors.black45)),
+                      trailing: const Icon(Icons.link, color: Colors.blue),
+                      onTap: () => _connectToDevice(device),
+                    ),
+                  );
+                },
+              ),
+      ),
       ],
     );
   }
@@ -511,6 +583,13 @@ class _RcControllerPageState extends State<RcControllerPage> {
                   _sendAction("LUCE:${_isLightOn ? 0 : 1}");
                 },
               ),
+              const SizedBox(height: 10),
+              // TASTO SCOLLEGA SEMPLIFICATO: Cancella la memoria e scollega all'istante
+              TextButton.icon(
+                icon: const Icon(Icons.logout, color: Colors.black45, size: 16),
+                label: const Text("Scollega", style: TextStyle(color: Colors.black45, fontSize: 11, fontWeight: FontWeight.bold)),
+                onPressed: _forgetAndDisconnectDevice, // Chiama direttamente la routine di pulizia e disconnessione
+              )
             ],
           ),
         ),
@@ -555,3 +634,4 @@ class _RcControllerPageState extends State<RcControllerPage> {
     );
   }
 }
+
