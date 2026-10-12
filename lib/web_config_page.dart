@@ -20,10 +20,10 @@ class _WebConfigPageState extends State<WebConfigPage> {
       ..setBackgroundColor(const Color(0xFFF0F2F5));
 
     // 1. Svuota la cache locale memorizzata dall'app prima di caricare la pagina
-    _controller!.clearCache();
+    _controller.clearCache();
 
     // 2. Forza la richiesta HTTP a ignorare la cache lato server/client con gli header No-Cache
-    _controller!.loadRequest(
+    _controller.loadRequest(
       Uri.parse(widget.url),
       headers: {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
