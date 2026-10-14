@@ -33,13 +33,15 @@ class _RcControllerPageState extends State<RcControllerPage> {
   // Timer per l'invio periodico temporizzato (Rate Limiting)
   Timer? _transmissionTimer;
   Timer? _keepAliveTimer;
-
+  Timer? _scanTimeoutTimer; // Timer software per gestire graficamente il timeout
+  
   // Configurazione Bluetooth BLE
   BluetoothDevice? _connectedDevice;
   BluetoothCharacteristic? _rxCharacteristic;
   BluetoothCharacteristic? _txCharacteristic;
 
   bool _isScanning = false;
+  bool _scanTimeout = false; // per scambiare la grafica di ricerca col tasto di riavvio
   List<ScanResult> _scanResults = [];
   StreamSubscription? _scanSubscription;
 
@@ -56,7 +58,10 @@ class _RcControllerPageState extends State<RcControllerPage> {
 
     // Ascolta i risultati della scansione BLE
     _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
-      setState(() { _scanResults = results; });
+      if (!mounted) return;
+      setState(() {
+        _scanResults = results;
+      });
 
       // Auto-connessione se c'è un indirizzo salvato in memoria
       if (_savedMacAddress != null && _connectedDevice == null) {
@@ -76,6 +81,8 @@ class _RcControllerPageState extends State<RcControllerPage> {
                 }
               }
             }
+            _scanTimeoutTimer?.cancel();
+            print("_scanTimeoutTimer stop in initState");
             FlutterBluePlus.stopScan();
             _connectToDevice(result.device);
             break;
@@ -94,6 +101,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
   void dispose() {
     _scanSubscription?.cancel();
     // Ferma i timer se si esce dalla pagina
+    _scanTimeoutTimer?.cancel();
     _stopTransmissionTimer();
     _stopKeepAliveTimer();
     _exitFullscreen();
@@ -116,6 +124,11 @@ class _RcControllerPageState extends State<RcControllerPage> {
 
   // Cancella la memoria, scollega il BLE e torna alla ricerca pulita
   void _forgetAndDisconnectDevice() async {
+    _scanTimeoutTimer?.cancel();
+    // Forza lo stop immediato della scansione nativa per sbloccare l'antenna
+    try {
+      await FlutterBluePlus.stopScan();
+    } catch (_) {}
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(AppConstants.prefMacAddressKey);
 
@@ -133,9 +146,16 @@ class _RcControllerPageState extends State<RcControllerPage> {
       _txCharacteristic = null;
       _rxCharacteristic = null;
       _scanResults.clear();
+      _isScanning = false; // Sblocca esplicitamente la variabile prima del riavvio
+      _scanTimeout = false;
     });
 
-    _startScan(); // Fai ripartire la scansione automatica sui dispositivi liberi
+    // Inserito un piccolo ritardo asincrono per permettere ad Android di digerire lo stop nativo
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        _startScan();
+      }
+    });
   }
 
   void _startTransmissionTimer() {
@@ -204,6 +224,8 @@ class _RcControllerPageState extends State<RcControllerPage> {
   }
 
   void _startScan() async {
+    print("_startScan with _isScanning $_isScanning");
+    
     if (_isScanning) return;
 
     // Controlla lo stato attuale del Bluetooth dello smartphone
@@ -239,6 +261,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
     setState(() {
       _scanResults.clear();
       _isScanning = true;
+      _scanTimeout = false; // Resetta il timeout quando parte una nuova ricerca
     });
     try {
       await FlutterBluePlus.stopScan();
@@ -247,12 +270,29 @@ class _RcControllerPageState extends State<RcControllerPage> {
         timeout: const Duration(seconds: AppConstants.bleScanDurationSeconds),
         withServices: [Guid(AppConstants.serviceUuid)]
       );
+
+print("avvio timer scansione in _startScan");
+      // Avvia il timer software per accorgersi del timeout
+      _scanTimeoutTimer?.cancel();
+      _scanTimeoutTimer = Timer(const Duration(seconds: AppConstants.bleScanDurationSeconds), () {
+        if (mounted && _connectedDevice == null) {
+          setState(() {
+            _scanTimeout = true;
+            _isScanning = false;
+          });
+        }
+      });
+
     } catch (e) {
       print("Errore scansione BT: $e");
-    }
+
+      // Resetta lo stato visivo solo in caso di fallimento immediato del pacchetto di avvio
+      _scanTimeoutTimer?.cancel();
       setState(() {
         _isScanning = false;
+        _scanTimeout = true;
       });
+    }
   }
 
   void _connectToDevice(BluetoothDevice device) async {
@@ -267,6 +307,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
       setState(() {
         _connectedDevice = device;
         _savedMacAddress = device.remoteId.toString();
+        _scanTimeout = false;
       });
       List<BluetoothService> services = await device.discoverServices();
       for (var service in services) {
@@ -332,6 +373,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
       _exitFullscreen();
       setState(() {
         _connectedDevice = null;
+        _isScanning = false;
       });
       print("Errore connessione BT: $e");
     }
@@ -401,25 +443,52 @@ class _RcControllerPageState extends State<RcControllerPage> {
           actions: [
             IconButton(
               icon: Icon(_isScanning ? Icons.stop : Icons.bluetooth_searching, color: Colors.blue),
-              onPressed: _isScanning ? () => FlutterBluePlus.stopScan() : _startScan,
+              onPressed: _isScanning ? () { _scanTimeoutTimer?.cancel(); 
+	                                    FlutterBluePlus.stopScan();
+					    setState(() { _isScanning = false; _scanTimeout = true; });
+                                          } : _startScan,
             )
           ],
         ),
         if (_isScanning) const LinearProgressIndicator(color: Colors.blue),
         Expanded(
-          child: _savedMacAddress != null
+            child: _savedMacAddress != null
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                    const CircularProgressIndicator(color: Colors.blue),
-                    const SizedBox(height: 20),
-                    Text(
-                      "Connessione al device salvato...\n($_savedMacAddress)",
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 30),
+                       // Se il timeout NON è scattato mostra la freccia che gira, altrimenti la scambia col pulsante di riavvio
+if (!_scanTimeout)
+const Padding(
+padding: EdgeInsets.only(bottom: 20),
+child: CircularProgressIndicator(color: Colors.blue),
+)
+else
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 20),
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blue,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                            ),
+                            icon: const Icon(Icons.refresh),
+                            label: const Text("Riprova Connessione Aut.", style: TextStyle(fontWeight: FontWeight.bold)),
+                            onPressed: _startScan, // Riavvia la scansione senza dover chiudere l'app
+                          ),
+                        ),
+Text(
+_scanTimeout
+? "Device non trovato. Verifica che sia acceso!\n($_savedMacAddress)"
+: "Ricerca automatica device salvato...\n($_savedMacAddress)",
+textAlign: TextAlign.center,
+style: TextStyle(
+color: _scanTimeout ? Colors.red.shade700 : Colors.black54,
+fontWeight: FontWeight.bold,
+),
+),
+const SizedBox(height: 35),
+// Il pulsante rosso per cancellare la memoria resta qui, sempre visibile
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade50),
                         icon: const Icon(Icons.delete, color: Colors.red),
@@ -458,7 +527,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
                               }
                             }
                           }
-                    
+_scanTimeoutTimer?.cancel();
                           FlutterBluePlus.stopScan();
                           _connectToDevice(device);
                         },
