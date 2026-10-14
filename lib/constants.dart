@@ -12,7 +12,7 @@ class AppConstants {
   static const String characteristicUuidTx = "04d3552e-b9b3-4be6-a8b4-aa43c4507c4d";
 
   // --- RETE E WEBVIEW ---
-  static const String defaultIpAddress = "192.168.1.227"; //192.168.4.1
+  static const String defaultIpAddress = "192.168.4.1";
   static const String webConfigPath = "/config";
 
   // --- TEMPORIZZAZIONE ---
