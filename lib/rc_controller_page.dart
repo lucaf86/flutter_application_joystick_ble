@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:scanf/scanf.dart';
 
 import 'raw_joystick.dart';
 import 'web_config_page.dart';
@@ -344,11 +345,29 @@ print("avvio timer scansione in _startScan");
                     _esp32IpAddress = datoStringa.substring(3);
                     print("[BLE] Ricevuto IP dinamico dall'ESP32: $_esp32IpAddress");
                   });
-                } else {
+                } else if (datoStringa.startsWith("BATTERY:")) {
                   setState(() {
-                    // Rimuove eventuali simboli '%' se inviati dall'ESP32 per estrarre solo il numero
-                    _livelloBatteria = int.tryParse(datoStringa.replaceAll('%', '')) ?? 100;
+                    try {
+                      // %d = intero, %f = double/float, %s = stringa
+                      final scanf = ScanF("BATTERY:%d,%f,%s");
+                      final parsed = scanf.match(datoStringa);
+
+                      if (parsed != null && parsed.length >= 3) {
+                        int percentuale = parsed[0];
+                        double tensione = parsed[1];
+                        String stato = parsed[2];
+
+                        _livelloBatteria = percentuale.clamp(0, 100);
+
+                        //print("[SCANF BATTERY] %: $percentuale, Volt: $tensione, Stato: $stato");
+                      }
+                    } catch (e) {
+                      print("Errore nel parsing con pacchetto scanf: $e");
+                      _livelloBatteria = 0;
+                    }
                   });
+                } else { // unknown
+                  print("Comando sconosciusto ricevuto: $datoStringa");
                 }
                 //print("Dati ricevuti dall'ESP32: $datoStringa");
               });
@@ -457,13 +476,13 @@ print("avvio timer scansione in _startScan");
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                       // Se il timeout NON è scattato mostra la freccia che gira, altrimenti la scambia col pulsante di riavvio
-if (!_scanTimeout)
-const Padding(
-padding: EdgeInsets.only(bottom: 20),
-child: CircularProgressIndicator(color: Colors.blue),
-)
-else
+                      // Se il timeout NON è scattato mostra la freccia che gira, altrimenti la scambia col pulsante di riavvio
+                      if (!_scanTimeout)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 20),
+                          child: CircularProgressIndicator(color: Colors.blue),
+                        )
+                      else
                         Padding(
                           padding: const EdgeInsets.only(bottom: 20),
                           child: ElevatedButton.icon(
@@ -477,18 +496,20 @@ else
                             onPressed: _startScan, // Riavvia la scansione senza dover chiudere l'app
                           ),
                         ),
-Text(
-_scanTimeout
-? "Device non trovato. Verifica che sia acceso!\n($_savedMacAddress)"
-: "Ricerca automatica device salvato...\n($_savedMacAddress)",
-textAlign: TextAlign.center,
-style: TextStyle(
-color: _scanTimeout ? Colors.red.shade700 : Colors.black54,
-fontWeight: FontWeight.bold,
-),
-),
-const SizedBox(height: 35),
-// Il pulsante rosso per cancellare la memoria resta qui, sempre visibile
+                        Text(
+                        _scanTimeout
+                            ? "Device non trovato. Verifica che sia acceso!\n($_savedMacAddress)"
+                            : "Ricerca automatica device salvato...\n($_savedMacAddress)",
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: _scanTimeout
+                              ? Colors.red.shade700
+                              : Colors.black54,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 35),
+                      // Il pulsante rosso per cancellare la memoria resta qui, sempre visibile
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade50),
                         icon: const Icon(Icons.delete, color: Colors.red),
@@ -527,7 +548,7 @@ const SizedBox(height: 35),
                               }
                             }
                           }
-_scanTimeoutTimer?.cancel();
+                          _scanTimeoutTimer?.cancel();
                           FlutterBluePlus.stopScan();
                           _connectToDevice(device);
                         },
