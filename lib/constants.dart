@@ -18,7 +18,11 @@ class AppConstants {
   // --- TEMPORIZZAZIONE ---
   static const int transmissionIntervalMs = 120;
   static const int bleTimeoutSeconds = 5;
-  static const int scanDurationSeconds = 4;
+  static const int scanDurationSeconds = 5;
+
+  static const String keepAliveAckCommand = "#ACK";
+
+  static const int keepAliveAckDataKey = 0x02E5;
 
   // --- DIMENSIONI JOYSTICK PICCOLI (TILT / LIFT) ---
   static const double smallJoystickSize = 145.0;

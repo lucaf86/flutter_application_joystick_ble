@@ -30,6 +30,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
 
   // Timer per l'invio periodico temporizzato (Rate Limiting)
   Timer? _transmissionTimer;
+  Timer? _keepAliveTimer;
 
   // Configurazione Bluetooth BLE
   BluetoothDevice? _connectedDevice;
@@ -44,6 +45,8 @@ class _RcControllerPageState extends State<RcControllerPage> {
 
   String? _savedMacAddress; // Memorizza temporaneamente il MAC caricato all'avvio
 
+  int _keepAlivePeriodMs  = 250;
+
   @override
   void initState() {
     super.initState();
@@ -57,6 +60,18 @@ class _RcControllerPageState extends State<RcControllerPage> {
         for (var result in results) {
           if (result.device.remoteId.toString() == _savedMacAddress) {
             //print("[AUTO-CONNECT] Connecting to saved devide (${result.device.platformName})...");
+            if (result.advertisementData.manufacturerData.isNotEmpty) {
+              var key = result.advertisementData.manufacturerData.keys.first;
+			        List<int>? data = result.advertisementData.manufacturerData[key];
+                            
+              if (key == AppConstants.keepAliveAckDataKey && data != null && data.length >= 2) {
+                int ackMs = (data[0] << 8) | data[1];
+                if (ackMs > 0 && ackMs < 5000) {
+                  _keepAlivePeriodMs = ackMs;
+                  print("_keepAlivePeriodMs rilevato: $_keepAlivePeriodMs ms");
+                }
+              }
+            }
             FlutterBluePlus.stopScan();
             _connectToDevice(result.device);
             break;
@@ -75,6 +90,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
   void dispose() {
     _scanSubscription?.cancel();
     _stopTransmissionTimer(); // Ferma il timer se si esce dalla pagina
+    _stopKeepAliveTimer();
     _exitFullscreen();
     super.dispose();
   }
@@ -102,6 +118,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
 
     _exitFullscreen();
     _stopTransmissionTimer();
+    _stopKeepAliveTimer();
 
     setState(() {
       _connectedDevice = null;
@@ -127,6 +144,25 @@ class _RcControllerPageState extends State<RcControllerPage> {
       //print("[TIMER] Arresto della routine periodica.");
       _transmissionTimer?.cancel();
       _transmissionTimer = null;
+    }
+  }
+
+  void _startKeepaliveTimer() {
+    _stopKeepAliveTimer();
+    _keepAliveTimer = Timer.periodic(Duration(milliseconds: _keepAlivePeriodMs), (timer) {
+      if (_txCharacteristic != null) {
+        _txCharacteristic!.write(
+          utf8.encode(AppConstants.keepAliveAckCommand), 
+          withoutResponse: true
+        ).catchError((e) => print("Errore invio ACK KeepAlive: $e"));
+      }
+    });
+  }
+
+  void _stopKeepAliveTimer() {
+    if (_keepAliveTimer != null) {
+      _keepAliveTimer?.cancel();
+      _keepAliveTimer = null;
     }
   }
 
@@ -201,7 +237,10 @@ class _RcControllerPageState extends State<RcControllerPage> {
     try {
       await FlutterBluePlus.stopScan(); 
       await Future.delayed(const Duration(milliseconds: 200)); // Pausa di sicurezza per il wrapper Android
-      await FlutterBluePlus.startScan(timeout: const Duration(seconds: AppConstants.scanDurationSeconds));
+      await FlutterBluePlus.startScan(
+        timeout: const Duration(seconds: AppConstants.scanDurationSeconds),
+        withServices: [Guid(AppConstants.serviceUuid)]
+      );
     } catch (e) {
       print("Errore scansione BT: $e");
     }
@@ -249,9 +288,9 @@ class _RcControllerPageState extends State<RcControllerPage> {
                 String datoStringa = utf8.decode(value).trim();
                 datoStringa = datoStringa.replaceAll('%', '');
                 
-                if (datoStringa.startsWith("LUCE_STATO:")) {
+                if (datoStringa.startsWith("LIGHT_STATE:")) {
                   setState(() {
-                    _isLightOn = (datoStringa == "LUCE_STATO:1");
+                    _isLightOn = (datoStringa == "LIGHT_STATE:1");
                   });
                 } else if (datoStringa.startsWith("IP:")) {
                   setState(() {
@@ -275,6 +314,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
       if (_txCharacteristic != null) {
         //_goFullscreen(); //  spostato a inizio funzione
         _startTransmissionTimer();
+        _startKeepaliveTimer();
       } else {
         _exitFullscreen();
         setState(() { _connectedDevice = null; });
@@ -296,10 +336,9 @@ class _RcControllerPageState extends State<RcControllerPage> {
     int tiltInt = (_tilt * 100).round();
     int liftInt = (_lift * 100).round();
 
-    // Formato: L=Trazione, R=Sterzo, T=Tilt, V=leVazione (Elevazione)
-    // Stringa super compatta (es: "L:85,R:-30,T:0,V:45")
-    String dataString = "L:$trazioneInt,R:$sterzoInt,T:$tiltInt,V:$liftInt";
-    //String dataString = "L:${_trazione.toStringAsFixed(2)},R:${_sterzo.toStringAsFixed(2)},T:${_tilt.toStringAsFixed(2)},V:${_lift.toStringAsFixed(2)}";
+    // Formato: D=Drive/Trazione, S=Sterzo, T=Tilt, L=lift/elevazione
+    // Stringa super compatta (es: "D:85,S:-30,T:0,L:45")
+    String dataString = "#D:$trazioneInt,S:$sterzoInt,T:$tiltInt,L:$liftInt";
     // Se la stringa è identica (es: fermo o stick bloccati nella stessa posizione), salta l'invio
     if (dataString == _lastSentData) return;
     _lastSentData = dataString;
@@ -312,7 +351,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
     }
   }
 
-  // Invia un comando speciale per i pulsanti (es. LUCE:1 o LUCE:0)
+  // Invia un comando speciale per i pulsanti (es. LIGHT:1 o LIGHT:0)
   void _sendAction(String action) async {
     if (_txCharacteristic == null) return;
     try {
@@ -380,24 +419,43 @@ class _RcControllerPageState extends State<RcControllerPage> {
                   ],
                 ),
               )
-            : ListView.builder(
-                itemCount: _scanResults.length,
-                itemBuilder: (context, index) {
-                  final device = _scanResults[index].device;
-                  final name = device.platformName.isNotEmpty ? device.platformName : "Dispositivo Sconosciuto";
-                  return Card(
-                    margin: const EdgeInsets.symmetric(horizontal: 40, vertical: 6),
-                    color: Colors.white,
-                    elevation: 2,
-                    child: ListTile(
-                      title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
-                      subtitle: Text(device.remoteId.toString(), style: const TextStyle(color: Colors.black45)),
-                      trailing: const Icon(Icons.link, color: Colors.blue),
-                      onTap: () => _connectToDevice(device),
-                    ),
-                  );
-                },
-              ),
+          : ListView.builder(
+            itemCount: _scanResults.length,
+            itemBuilder: (context, index) {
+              final scanResult = _scanResults[index];
+              final device = scanResult.device;
+              final name = device.platformName.isNotEmpty ? device.platformName : "Dispositivo Sconosciuto";
+
+              return Card(
+                margin: const EdgeInsets.symmetric(horizontal: 40, vertical: 6),
+                color: Colors.white,
+                elevation: 2,
+                child: ListTile(
+                  title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
+                  subtitle: Text(device.remoteId.toString(), style: const TextStyle(color: Colors.black45)),
+                  trailing: const Icon(Icons.link, color: Colors.blue),
+                  onTap: () {
+                    // extract manufacturer data from BLE advertising
+                    if (scanResult.advertisementData.manufacturerData.isNotEmpty) {
+                      var key = scanResult.advertisementData.manufacturerData.keys.first;
+			                List<int>? data = scanResult.advertisementData.manufacturerData[key];
+                            
+                      if (key == AppConstants.keepAliveAckDataKey && data != null && data.length >= 2) {
+                        int ackMs = (data[0] << 8) | data[1];
+                        if (ackMs > 0 && ackMs < 5000) {
+                          _keepAlivePeriodMs = ackMs;
+                          print("_keepAlivePeriodMs rilevato: $_keepAlivePeriodMs ms");
+                        }
+                      }
+                    }
+                    
+                    FlutterBluePlus.stopScan();
+                    _connectToDevice(device);
+                  },
+                ),
+              );
+            },
+          ),
       ),
       ],
     );
@@ -528,7 +586,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
                           await _connectedDevice!.connect(
                                 autoConnect: false,
                                 license: License.nonprofit
-                              ).timeout(const Duration(seconds: 5));
+                              ).timeout(const Duration(seconds: AppConstants.bleTimeoutSeconds));
 
                           // Riscopre i servizi per riagganciare i canali RX e TX
                           List<BluetoothService> services = await _connectedDevice!.discoverServices();
@@ -580,7 +638,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
                       : AppConstants.centerButtonColor,
                 ),
                 onPressed: () {
-                  _sendAction("LUCE:${_isLightOn ? 0 : 1}");
+                  _sendAction("LIGHT:${_isLightOn ? 0 : 1}");
                 },
               ),
               const SizedBox(height: 10),
