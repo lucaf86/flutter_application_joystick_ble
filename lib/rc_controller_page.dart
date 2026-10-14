@@ -141,7 +141,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
   void _startTransmissionTimer() {
     _stopTransmissionTimer();
     // Invia i dati aggregati dei joystick in modo fisso ogni 120 millisecondi
-    _transmissionTimer = Timer.periodic(const Duration(milliseconds: AppConstants.transmissionIntervalMs), (timer) {
+    _transmissionTimer = Timer.periodic(const Duration(milliseconds: AppConstants.cmdTransmissionIntervalMs), (timer) {
         _sendJoystickData();
       });
   }
@@ -228,7 +228,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Attiva il Bluetooth nelle impostazioni per procedere!'),
-            duration: Duration(seconds: AppConstants.scanDurationSeconds),
+            duration: Duration(seconds: AppConstants.bleScanDurationSeconds),
           ),
         );
         return;
@@ -244,7 +244,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
       await FlutterBluePlus.stopScan();
       await Future.delayed(const Duration(milliseconds: 300)); // Pausa di sicurezza per il wrapper Android
       await FlutterBluePlus.startScan(
-        timeout: const Duration(seconds: AppConstants.scanDurationSeconds),
+        timeout: const Duration(seconds: AppConstants.bleScanDurationSeconds),
         withServices: [Guid(AppConstants.serviceUuid)]
       );
     } catch (e) {
@@ -596,7 +596,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
                           await _connectedDevice!.connect(
                                 autoConnect: false,
                                 license: License.nonprofit
-                              ).timeout(const Duration(seconds: AppConstants.bleTimeoutSeconds));
+                              ).timeout(const Duration(seconds: AppConstants.bleReconnectTimeoutSeconds));
 
                           // Riscopre i servizi per riagganciare i canali RX e TX
                           List<BluetoothService> services = await _connectedDevice!.discoverServices();

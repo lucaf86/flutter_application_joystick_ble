@@ -16,9 +16,9 @@ class AppConstants {
   static const String webConfigPath = "/config";
 
   // --- TEMPORIZZAZIONE ---
-  static const int transmissionIntervalMs = 120;
-  static const int bleTimeoutSeconds = 5;
-  static const int scanDurationSeconds = 5;
+  static const int cmdTransmissionIntervalMs = 120;
+  static const int bleReconnectTimeoutSeconds = 5;
+  static const int bleScanDurationSeconds = 10;
 
   static const String keepAliveAckCommand = "#ACK";
 
