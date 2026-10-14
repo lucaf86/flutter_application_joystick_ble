@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart'; 
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'raw_joystick.dart';
 import 'web_config_page.dart';
 import 'constants.dart';
@@ -26,7 +28,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
 
   bool _isLightOn = false; // Controllato direttamente dal feedback dell'ESP32
   String _lastSentData = "";
-  String _esp32IpAddress = AppConstants.defaultIpAddress; 
+  String _esp32IpAddress = AppConstants.defaultIpAddress;
 
   // Timer per l'invio periodico temporizzato (Rate Limiting)
   Timer? _transmissionTimer;
@@ -35,35 +37,37 @@ class _RcControllerPageState extends State<RcControllerPage> {
   // Configurazione Bluetooth BLE
   BluetoothDevice? _connectedDevice;
   BluetoothCharacteristic? _rxCharacteristic;
-  BluetoothCharacteristic? _txCharacteristic; 
-  
+  BluetoothCharacteristic? _txCharacteristic;
+
   bool _isScanning = false;
   List<ScanResult> _scanResults = [];
   StreamSubscription? _scanSubscription;
+
   // Variabili per la gestione dinamica della batteria
   int _livelloBatteria = 100; // Valore numerico di default
 
   String? _savedMacAddress; // Memorizza temporaneamente il MAC caricato all'avvio
-
-  int _keepAlivePeriodMs  = 250;
+  
+  int _keepAlivePeriodMs = 250;
 
   @override
   void initState() {
     super.initState();
-    
-    // 1. Ascolta i risultati della scansione normale
+
+    // Ascolta i risultati della scansione BLE
     _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
       setState(() { _scanResults = results; });
-      
-      // Auto-connessione automatica se c'è un indirizzo salvato in memoria
-       if (_savedMacAddress != null && _connectedDevice == null) {
+
+      // Auto-connessione se c'è un indirizzo salvato in memoria
+      if (_savedMacAddress != null && _connectedDevice == null) {
         for (var result in results) {
           if (result.device.remoteId.toString() == _savedMacAddress) {
             //print("[AUTO-CONNECT] Connecting to saved devide (${result.device.platformName})...");
+            // Estrazione del Keep-Alive dinamico dai Manufacturer Data di NimBLE
             if (result.advertisementData.manufacturerData.isNotEmpty) {
               var key = result.advertisementData.manufacturerData.keys.first;
-			        List<int>? data = result.advertisementData.manufacturerData[key];
-                            
+              List<int>? data = result.advertisementData.manufacturerData[key];
+
               if (key == AppConstants.keepAliveAckDataKey && data != null && data.length >= 2) {
                 int ackMs = (data[0] << 8) | data[1];
                 if (ackMs > 0 && ackMs < 5000) {
@@ -80,16 +84,17 @@ class _RcControllerPageState extends State<RcControllerPage> {
       }
     });
 
-    // Avvia il controllo dopo un piccolo ritardo per permettere al motore dell'app di svegliarsi
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-    _checkSavedDevice();
+      _checkSavedDevice();
     });
   }
 
   @override
   void dispose() {
     _scanSubscription?.cancel();
-    _stopTransmissionTimer(); // Ferma il timer se si esce dalla pagina
+    // Ferma i timer se si esce dalla pagina
+    _stopTransmissionTimer();
     _stopKeepAliveTimer();
     _exitFullscreen();
     super.dispose();
@@ -99,9 +104,11 @@ class _RcControllerPageState extends State<RcControllerPage> {
   void _checkSavedDevice() async {
     final prefs = await SharedPreferences.getInstance();
     final savedMac = prefs.getString(AppConstants.prefMacAddressKey);
-    
+
     if (savedMac != null && savedMac.isNotEmpty) {
-      setState(() { _savedMacAddress = savedMac; });
+      setState(() {
+        _savedMacAddress = savedMac;
+      });
       //print("[MEMORIA] MAC Address trovato: $savedMac. Attivo scansione...");
     }
     _startScan(); // Avvia in ogni caso la scansione delle antenne
@@ -111,7 +118,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
   void _forgetAndDisconnectDevice() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(AppConstants.prefMacAddressKey);
-    
+
     if (_connectedDevice != null) {
       await _connectedDevice!.disconnect();
     }
@@ -127,7 +134,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
       _rxCharacteristic = null;
       _scanResults.clear();
     });
-    
+
     _startScan(); // Fai ripartire la scansione automatica sui dispositivi liberi
   }
 
@@ -135,8 +142,8 @@ class _RcControllerPageState extends State<RcControllerPage> {
     _stopTransmissionTimer();
     // Invia i dati aggregati dei joystick in modo fisso ogni 120 millisecondi
     _transmissionTimer = Timer.periodic(const Duration(milliseconds: AppConstants.transmissionIntervalMs), (timer) {
-      _sendJoystickData();
-    });
+        _sendJoystickData();
+      });
   }
 
   void _stopTransmissionTimer() {
@@ -150,13 +157,13 @@ class _RcControllerPageState extends State<RcControllerPage> {
   void _startKeepaliveTimer() {
     _stopKeepAliveTimer();
     _keepAliveTimer = Timer.periodic(Duration(milliseconds: _keepAlivePeriodMs), (timer) {
-      if (_txCharacteristic != null) {
-        _txCharacteristic!.write(
-          utf8.encode(AppConstants.keepAliveAckCommand), 
-          withoutResponse: true
-        ).catchError((e) => print("Errore invio ACK KeepAlive: $e"));
-      }
-    });
+        if (_txCharacteristic != null) {
+          _txCharacteristic!.write(
+                utf8.encode(AppConstants.keepAliveAckCommand),
+                withoutResponse: true
+              ).catchError((e) => print("Errore invio ACK KeepAlive: $e"));
+        }
+      });
   }
 
   void _stopKeepAliveTimer() {
@@ -174,10 +181,11 @@ class _RcControllerPageState extends State<RcControllerPage> {
     ]);
 
     // Rende trasparenti le barre di sistema in modo che lo sfondo riempia anche la zona della fotocamera
-    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      systemNavigationBarColor: Colors.transparent,
-    ));
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: Colors.transparent,
+      ));
 
     // Nasconde la barra di stato e i tasti virtuali
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
@@ -200,25 +208,23 @@ class _RcControllerPageState extends State<RcControllerPage> {
 
     // Controlla lo stato attuale del Bluetooth dello smartphone
     if (await FlutterBluePlus.adapterState.first != BluetoothAdapterState.on) {
-      try {        
+      try {
         // 1. TENTATIVO: Mostra il pop-up nativo di Android che chiede "Consenti di attivare il Bluetooth"
         await FlutterBluePlus.turnOn();
         // Aspetta un piccolo istante per dare il tempo all'antenna di accendersi fisicamente
-        await Future.delayed(const Duration(milliseconds: 500));
-        
+        await Future.delayed(const Duration(milliseconds: 600));
+
         // Se l'utente ha rifiutato o non si è acceso, reindirizza alle impostazioni
         if (await FlutterBluePlus.adapterState.first != BluetoothAdapterState.on) {
           throw Exception("Bluetooth is OFF");
         }
-      } catch (e) {      
+      } catch (e) {
         // 2. FALLBACK: Apre direttamente la pagina delle Impostazioni / App Info del telefono
         // così l'utente può attivare il Bluetooth o controllare i permessi dei Dispositivi Vicini
-        await SystemChannels.platform.invokeMethod(
-          'SystemNavigator.pop',
-        ); // Chiude temporaneamente se necessario
+        await SystemChannels.platform.invokeMethod('SystemNavigator.pop'); // Chiude temporaneamente se necessario
         // Nota: FlutterBluePlus non gestisce l'intent Android profondo in autonomia,
         // ma con questo pop-up l'utente viene guidato in modo efficace.
-        
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Attiva il Bluetooth nelle impostazioni per procedere!'),
@@ -235,8 +241,8 @@ class _RcControllerPageState extends State<RcControllerPage> {
       _isScanning = true;
     });
     try {
-      await FlutterBluePlus.stopScan(); 
-      await Future.delayed(const Duration(milliseconds: 200)); // Pausa di sicurezza per il wrapper Android
+      await FlutterBluePlus.stopScan();
+      await Future.delayed(const Duration(milliseconds: 300)); // Pausa di sicurezza per il wrapper Android
       await FlutterBluePlus.startScan(
         timeout: const Duration(seconds: AppConstants.scanDurationSeconds),
         withServices: [Guid(AppConstants.serviceUuid)]
@@ -244,9 +250,9 @@ class _RcControllerPageState extends State<RcControllerPage> {
     } catch (e) {
       print("Errore scansione BT: $e");
     }
-    setState(() {
-      _isScanning = false;
-    });
+      setState(() {
+        _isScanning = false;
+      });
   }
 
   void _connectToDevice(BluetoothDevice device) async {
@@ -258,8 +264,8 @@ class _RcControllerPageState extends State<RcControllerPage> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(AppConstants.prefMacAddressKey, device.remoteId.toString());
 
-      setState(() { 
-        _connectedDevice = device; 
+      setState(() {
+        _connectedDevice = device;
         _savedMacAddress = device.remoteId.toString();
       });
       List<BluetoothService> services = await device.discoverServices();
@@ -282,12 +288,12 @@ class _RcControllerPageState extends State<RcControllerPage> {
               //print("Caratteristica RX (Notifiche) Agganciata!");
               // Se l'ESP32 invia dati indietro (es. stato batteria, ...), li leggi qui:
               await characteristic.setNotifyValue(true);
-              
+
               // ROUTINE DI RICEZIONE
               characteristic.onValueReceived.listen((value) {
                 String datoStringa = utf8.decode(value).trim();
                 datoStringa = datoStringa.replaceAll('%', '');
-                
+
                 if (datoStringa.startsWith("LIGHT_STATE:")) {
                   setState(() {
                     _isLightOn = (datoStringa == "LIGHT_STATE:1");
@@ -317,12 +323,16 @@ class _RcControllerPageState extends State<RcControllerPage> {
         _startKeepaliveTimer();
       } else {
         _exitFullscreen();
-        setState(() { _connectedDevice = null; });
+        setState(() {
+          _connectedDevice = null;
+        });
         print("[ERRORE] Caratteristica TX non trovata!");
       }
     } catch (e) {
       _exitFullscreen();
-      setState(() { _connectedDevice = null; });
+      setState(() {
+        _connectedDevice = null;
+      });
       print("Errore connessione BT: $e");
     }
   }
@@ -373,8 +383,8 @@ class _RcControllerPageState extends State<RcControllerPage> {
     return Scaffold(
       // Forza lo sfondo chiaro su tutto lo schermo
       backgroundColor: AppConstants.backgroundColor,
-      body: _connectedDevice == null 
-          ? SafeArea(child: _buildConnectionScreen()) 
+      body: _connectedDevice == null
+          ? SafeArea(child: _buildConnectionScreen())
           : _buildForkliftDashboard(), // Rimosso SafeArea per permettere lo schermo intero totale
     );
   }
@@ -396,12 +406,12 @@ class _RcControllerPageState extends State<RcControllerPage> {
           ],
         ),
         if (_isScanning) const LinearProgressIndicator(color: Colors.blue),
-      Expanded(
-        child: _savedMacAddress != null
-            ? Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
+        Expanded(
+          child: _savedMacAddress != null
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
                     const CircularProgressIndicator(color: Colors.blue),
                     const SizedBox(height: 20),
                     Text(
@@ -410,53 +420,53 @@ class _RcControllerPageState extends State<RcControllerPage> {
                       style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 30),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade50),
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      label: const Text("Annulla e cerca altri", style: TextStyle(color: Colors.red)),
-                      onPressed: _forgetAndDisconnectDevice,
-                    )
-                  ],
-                ),
-              )
-          : ListView.builder(
-            itemCount: _scanResults.length,
-            itemBuilder: (context, index) {
-              final scanResult = _scanResults[index];
-              final device = scanResult.device;
-              final name = device.platformName.isNotEmpty ? device.platformName : "Dispositivo Sconosciuto";
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade50),
+                        icon: const Icon(Icons.delete, color: Colors.red),
+                        label: const Text("Annulla e cerca altri", style: TextStyle(color: Colors.red)),
+                        onPressed: _forgetAndDisconnectDevice,
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: _scanResults.length,
+                  itemBuilder: (context, index) {
+                    final scanResult = _scanResults[index];
+                    final device = scanResult.device;
+                    final name = device.platformName.isNotEmpty ? device.platformName : "Dispositivo Sconosciuto";
 
-              return Card(
-                margin: const EdgeInsets.symmetric(horizontal: 40, vertical: 6),
-                color: Colors.white,
-                elevation: 2,
-                child: ListTile(
-                  title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
-                  subtitle: Text(device.remoteId.toString(), style: const TextStyle(color: Colors.black45)),
-                  trailing: const Icon(Icons.link, color: Colors.blue),
-                  onTap: () {
-                    // extract manufacturer data from BLE advertising
-                    if (scanResult.advertisementData.manufacturerData.isNotEmpty) {
-                      var key = scanResult.advertisementData.manufacturerData.keys.first;
-			                List<int>? data = scanResult.advertisementData.manufacturerData[key];
-                            
-                      if (key == AppConstants.keepAliveAckDataKey && data != null && data.length >= 2) {
-                        int ackMs = (data[0] << 8) | data[1];
-                        if (ackMs > 0 && ackMs < 5000) {
-                          _keepAlivePeriodMs = ackMs;
-                          print("_keepAlivePeriodMs rilevato: $_keepAlivePeriodMs ms");
-                        }
-                      }
-                    }
+                    return Card(
+                      margin: const EdgeInsets.symmetric(horizontal: 40, vertical: 6),
+                      color: Colors.white,
+                      elevation: 2,
+                      child: ListTile(
+                        title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
+                        subtitle: Text(device.remoteId.toString(), style: const TextStyle(color: Colors.black45)),
+                        trailing: const Icon(Icons.link, color: Colors.blue),
+                        onTap: () {
+                          // extract manufacturer data from BLE advertising
+                          if (scanResult.advertisementData.manufacturerData.isNotEmpty) {
+                            var key = scanResult.advertisementData.manufacturerData.keys.first;
+                            List<int>? data = scanResult.advertisementData.manufacturerData[key];
+
+                            if (key == AppConstants.keepAliveAckDataKey && data != null && data.length >= 2) {
+                              int ackMs = (data[0] << 8) | data[1];
+                              if (ackMs > 0 && ackMs < 5000) {
+                                _keepAlivePeriodMs = ackMs;
+                                print("_keepAlivePeriodMs rilevato: $_keepAlivePeriodMs ms");
+                              }
+                            }
+                          }
                     
-                    FlutterBluePlus.stopScan();
-                    _connectToDevice(device);
+                          FlutterBluePlus.stopScan();
+                          _connectToDevice(device);
+                        },
+                      ),
+                    );
                   },
                 ),
-              );
-            },
-          ),
-      ),
+        ),
       ],
     );
   }
@@ -471,12 +481,12 @@ class _RcControllerPageState extends State<RcControllerPage> {
           left: AppConstants.smallJoystickHorizontalPadding,
           top: AppConstants.smallJoystickTopPadding,
           child: RawJoystick(
-            joystickSize: AppConstants.smallJoystickSize, 
-            thumbSize: AppConstants.smallJoystickThumbSize, 
-            value: _tilt, 
-            isVertical: false, 
-            color: AppConstants.smallJoystickColor, 
-            embeddedLabel: "T", 
+            joystickSize: AppConstants.smallJoystickSize,
+            thumbSize: AppConstants.smallJoystickThumbSize,
+            value: _tilt,
+            isVertical: false,
+            color: AppConstants.smallJoystickColor,
+            embeddedLabel: "T",
             onChanged: (val) {
               setState(() {
                 _tilt = val;
@@ -490,12 +500,12 @@ class _RcControllerPageState extends State<RcControllerPage> {
           left: AppConstants.largeJoystickHorizontalPadding,
           bottom: AppConstants.largeJoystickBottomPadding,
           child: RawJoystick(
-            joystickSize: AppConstants.largeJoystickSize, 
-            thumbSize: AppConstants.largeJoystickThumbSize, 
-            value: _sterzo, 
-            isVertical: false, 
-            color: AppConstants.largeJoystickColor, 
-            embeddedLabel: "S", 
+            joystickSize: AppConstants.largeJoystickSize,
+            thumbSize: AppConstants.largeJoystickThumbSize,
+            value: _sterzo,
+            isVertical: false,
+            color: AppConstants.largeJoystickColor,
+            embeddedLabel: "S",
             onChanged: (val) {
               setState(() {
                 _sterzo = val;
@@ -626,7 +636,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
                   });
                 },
               ),
-              
+
               const SizedBox(height: 15),
               // Pulsante Luci
               IconButton(
@@ -647,7 +657,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
                 icon: const Icon(Icons.logout, color: Colors.black45, size: 16),
                 label: const Text("Scollega", style: TextStyle(color: Colors.black45, fontSize: 11, fontWeight: FontWeight.bold)),
                 onPressed: _forgetAndDisconnectDevice, // Chiama direttamente la routine di pulizia e disconnessione
-              )
+              ),
             ],
           ),
         ),
@@ -692,4 +702,3 @@ class _RcControllerPageState extends State<RcControllerPage> {
     );
   }
 }
-
