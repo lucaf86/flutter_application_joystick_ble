@@ -20,8 +20,8 @@ class RcControllerPage extends StatefulWidget {
 
 class _RcControllerPageState extends State<RcControllerPage> {
   // Assi dei Joystick (-1.0 a 1.0)
-  double _trazione = 0.0; // Speed (Verticale)
-  double _sterzo = 0.0; // Steering (Orizzontale)
+  double _throttle = 0.0; // Speed (Verticale)
+  double steering = 0.0; // Steering (Orizzontale)
 
   // Canali di controllo ausiliari (Piccoli)
   double _tilt = 0.0; // Inclinazione (Orizzontale)
@@ -47,7 +47,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
   StreamSubscription? _scanSubscription;
 
   // Variabili per la gestione dinamica della batteria
-  int _livelloBatteria = 100; // Valore numerico di default
+  int _batteryLevel = 100; // Valore numerico di default
 
   String? _savedMacAddress; // Memorizza temporaneamente il MAC caricato all'avvio
   
@@ -91,7 +91,6 @@ class _RcControllerPageState extends State<RcControllerPage> {
         }
       }
     });
-
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkSavedDevice();
@@ -333,43 +332,43 @@ print("avvio timer scansione in _startScan");
 
               // ROUTINE DI RICEZIONE
               characteristic.onValueReceived.listen((value) {
-                String datoStringa = utf8.decode(value).trim();
-                datoStringa = datoStringa.replaceAll('%', '');
+                String dataString = utf8.decode(value).trim();
+                dataString = dataString.replaceAll('%', '');
 
-                if (datoStringa.startsWith("LIGHT_STATE:")) {
+                if (dataString.startsWith("LIGHT_STATE:")) {
                   setState(() {
-                    _isLightOn = (datoStringa == "LIGHT_STATE:1");
+                    _isLightOn = (dataString == "LIGHT_STATE:1");
                   });
-                } else if (datoStringa.startsWith("IP:")) {
+                } else if (dataString.startsWith("IP:")) {
                   setState(() {
-                    _esp32IpAddress = datoStringa.substring(3);
+                    _esp32IpAddress = dataString.substring(3);
                     print("[BLE] Ricevuto IP dinamico dall'ESP32: $_esp32IpAddress");
                   });
-                } else if (datoStringa.startsWith("BATTERY:")) {
+                } else if (dataString.startsWith("BATTERY:")) {
                   setState(() {
                     try {
                       // %d = intero, %f = double/float, %s = stringa
                       final scanf = ScanF("BATTERY:%d,%f,%s");
-                      final parsed = scanf.match(datoStringa);
+                      final parsed = scanf.match(dataString);
 
                       if (parsed != null && parsed.length >= 3) {
-                        int percentuale = parsed[0];
-                        double tensione = parsed[1];
-                        String stato = parsed[2];
+                        int battPercent = parsed[0];
+                        double battVoltage = parsed[1];
+                        String battState = parsed[2];
 
-                        _livelloBatteria = percentuale.clamp(0, 100);
+                        _batteryLevel = battPercent.clamp(0, 100);
 
-                        //print("[SCANF BATTERY] %: $percentuale, Volt: $tensione, Stato: $stato");
+                        //print("[SCANF BATTERY] %: $battPercent, Volt: $battVoltage, Stato: $battState");
                       }
                     } catch (e) {
                       print("Errore nel parsing con pacchetto scanf: $e");
-                      _livelloBatteria = 0;
+                      _batteryLevel = 0;
                     }
                   });
                 } else { // unknown
-                  print("Comando sconosciusto ricevuto: $datoStringa");
+                  print("Comando sconosciusto ricevuto: $dataString");
                 }
-                //print("Dati ricevuti dall'ESP32: $datoStringa");
+                //print("Dati ricevuti dall'ESP32: $dataString");
               });
             }
           }
@@ -402,14 +401,14 @@ print("avvio timer scansione in _startScan");
   void _sendJoystickData() async {
     if (_txCharacteristic == null) return;
     // Converte i valori da float (-1.0 a 1.0) a interi (-100 a 100)
-    int trazioneInt = (_trazione * 100).round();
-    int sterzoInt = (_sterzo * 100).round();
+    int throttleInt = (_throttle * 100).round();
+    int steeringInt = (steering * 100).round();
     int tiltInt = (_tilt * 100).round();
     int liftInt = (_lift * 100).round();
 
-    // Formato: D=Drive/Trazione, S=Sterzo, T=Tilt, L=lift/elevazione
+    // Formato: D=Drive/throttle, S=Sterzo, T=Tilt, L=lift/elevazione
     // Stringa super compatta (es: "D:85,S:-30,T:0,L:45")
-    String dataString = "#D:$trazioneInt,S:$sterzoInt,T:$tiltInt,L:$liftInt";
+    String dataString = "#D:$throttleInt,S:$steeringInt,T:$tiltInt,L:$liftInt";
     // Se la stringa è identica (es: fermo o stick bloccati nella stessa posizione), salta l'invio
     if (dataString == _lastSentData) return;
     _lastSentData = dataString;
@@ -433,9 +432,9 @@ print("avvio timer scansione in _startScan");
   }
 
   // Calcola il colore della batteria dinamico in base alle soglie richieste
-  Color _getBatteryColor(int valore) {
-    if (valore >= 0 && valore <= 25) return Colors.red;
-    if (valore > 25 && valore <= 60) return Colors.orange;
+  Color _getBatteryColor(int val) {
+    if (val >= 0 && val <= 25) return Colors.red;
+    if (val > 25 && val <= 60) return Colors.orange;
     return Colors.green;
   }
 
@@ -592,13 +591,13 @@ print("avvio timer scansione in _startScan");
           child: RawJoystick(
             joystickSize: AppConstants.largeJoystickSize,
             thumbSize: AppConstants.largeJoystickThumbSize,
-            value: _sterzo,
+            value: steering,
             isVertical: false,
             color: AppConstants.largeJoystickColor,
             embeddedLabel: "S",
             onChanged: (val) {
               setState(() {
-                _sterzo = val;
+                steering = val;
               });
             },
           ),
@@ -628,9 +627,9 @@ print("avvio timer scansione in _startScan");
                       child: AnimatedContainer(
                         duration: const Duration(milliseconds: 500),
                         // Calcola la larghezza proporzionale (max 47 pixel liberi interni)
-                        width: (47 * (_livelloBatteria / 100)).clamp(0.0, 47.0),
+                        width: (47 * (_batteryLevel / 100)).clamp(0.0, 47.0),
                         decoration: BoxDecoration(
-                          color: _getBatteryColor(_livelloBatteria),
+                          color: _getBatteryColor(_batteryLevel),
                           borderRadius: BorderRadius.circular(1),
                         ),
                       ),
@@ -777,13 +776,13 @@ print("avvio timer scansione in _startScan");
           child: RawJoystick(
             joystickSize: AppConstants.largeJoystickSize,
             thumbSize: AppConstants.largeJoystickThumbSize,
-            value: _trazione,
+            value: _throttle,
             isVertical: true,
             color: AppConstants.largeJoystickColor,
             embeddedLabel: "M",
             onChanged: (val) {
               setState(() {
-                _trazione = val * -1;
+                _throttle = val * -1;
               });
             },
           ),
