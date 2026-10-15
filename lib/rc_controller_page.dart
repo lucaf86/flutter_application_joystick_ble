@@ -83,7 +83,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
               }
             }
             _scanTimeoutTimer?.cancel();
-            print("_scanTimeoutTimer stop in initState");
+            //print("_scanTimeoutTimer stop in initState");
             FlutterBluePlus.stopScan();
             _connectToDevice(result.device);
             break;
@@ -158,6 +158,77 @@ class _RcControllerPageState extends State<RcControllerPage> {
     });
   }
 
+  Future<void> _setupCharacteristics(List<BluetoothService> services) async {
+    for (var service in services) {
+      if (service.uuid.toString().toLowerCase() == AppConstants.serviceUuid.toLowerCase()) {
+        for (var characteristic in service.characteristics) {
+          String cUuid = characteristic.uuid.toString().toLowerCase();
+          
+          // 1. Write channel (app -> ESP32)
+          if (cUuid == AppConstants.characteristicUuidTx.toLowerCase()) {
+              setState(() {
+                _txCharacteristic = characteristic;
+              });
+              //print("Caratteristica TX (Scrittura) Agganciata!");
+          }
+          
+          // 2. Notify channel (ESP32 -> app)
+          if (cUuid == AppConstants.characteristicUuidRx.toLowerCase()) {
+              setState(() {
+                _rxCharacteristic = characteristic;
+              });
+
+            // create listener for incoming data first, then subscribe to notifications
+            characteristic.onValueReceived.listen((value) {
+              String dataString = utf8.decode(value).trim();
+
+              if (dataString.startsWith("LIGHT_STATE:")) {
+                  setState(() {
+                    _isLightOn = (dataString == "LIGHT_STATE:1");
+                  });
+              } else if (dataString.startsWith("IP:")) {
+                setState(() {
+                  _esp32IpAddress = dataString.substring(3);
+                  print("[BLE] Esp32 IP address received: $_esp32IpAddress");
+                });
+              } else if (dataString.startsWith("BATTERY:")) {
+                setState(() {
+                  try {
+                      // %d = intero, %f = double/float, %s = stringa
+                    final scanf = ScanF("BATTERY:%d,%f,%s");
+                    final parsed = scanf.match(dataString);
+		    
+                      if (parsed.length >= 3) {
+                        int battPercent = parsed[0];
+                        double battVoltage = parsed[1];
+                        String battState = parsed[2];
+			
+                        _batteryLevel = battPercent.clamp(0, 100);
+			
+                        //print("[SCANF BATTERY] %: $battPercent, Volt: $battVoltage, Stato: $battState");
+                      }
+                    } catch (e) {
+                    print("Errore nel parsing scanf: $e");
+                      _batteryLevel = 0;
+                    }
+                  });
+              } else { // unknown
+                  print("Comando sconosciusto ricevuto: $dataString");
+              }
+                //print("Dati ricevuti dall'ESP32: $dataString");
+            });
+
+            //print("Caratteristica RX (Notifiche) Agganciata!");
+            // Se l'ESP32 invia dati indietro (es. stato batteria, ...), li leggi qui:
+            await _rxCharacteristic?.setNotifyValue(true);
+            print("_connectToDevice: register to RX characteristic");
+          }
+        }
+      }
+    }
+  }
+
+
   void _startTransmissionTimer() {
     _stopTransmissionTimer();
     // Invia i dati aggregati dei joystick in modo fisso ogni 120 millisecondi
@@ -224,7 +295,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
   }
 
   void _startScan() async {
-    print("_startScan with _isScanning $_isScanning");
+    //print("_startScan with _isScanning $_isScanning");
     
     if (_isScanning) return;
 
@@ -271,7 +342,7 @@ class _RcControllerPageState extends State<RcControllerPage> {
         withServices: [Guid(AppConstants.serviceUuid)]
       );
 
-print("avvio timer scansione in _startScan");
+      //print("avvio timer scansione in _startScan");
       // Avvia il timer software per accorgersi del timeout
       _scanTimeoutTimer?.cancel();
       _scanTimeoutTimer = Timer(const Duration(seconds: AppConstants.bleScanDurationSeconds), () {
@@ -297,6 +368,7 @@ print("avvio timer scansione in _startScan");
 
   void _connectToDevice(BluetoothDevice device) async {
     try {
+      //print("_connectToDevice: ${device.platformName}");
       _goFullscreen(); // Forza l'orientamento orizzontale istantaneo durante la connessione
       await device.connect(autoConnect: false, license: License.nonprofit);
 
@@ -310,70 +382,7 @@ print("avvio timer scansione in _startScan");
         _scanTimeout = false;
       });
       List<BluetoothService> services = await device.discoverServices();
-      for (var service in services) {
-        if (service.uuid.toString().toLowerCase() == AppConstants.serviceUuid.toLowerCase()) {
-          for (var characteristic in service.characteristics) {
-            String cUuid = characteristic.uuid.toString().toLowerCase();
-            // 1. Aggancia la caratteristica di RICEZIONE dell'ESP32 (Scrittura del telefono)
-            if (cUuid == AppConstants.characteristicUuidTx.toLowerCase()) {
-              setState(() {
-                _txCharacteristic = characteristic;
-              });
-              //print("Caratteristica TX (Scrittura) Agganciata!");
-            }
-            // 2. Aggancia la caratteristica di TRASMISSIONE dell'ESP32 (Ascolto del telefono)
-            if (cUuid == AppConstants.characteristicUuidRx.toLowerCase()) {
-              setState(() {
-                _rxCharacteristic = characteristic;
-              });
-              //print("Caratteristica RX (Notifiche) Agganciata!");
-              // Se l'ESP32 invia dati indietro (es. stato batteria, ...), li leggi qui:
-              await characteristic.setNotifyValue(true);
-
-              // ROUTINE DI RICEZIONE
-              characteristic.onValueReceived.listen((value) {
-                String dataString = utf8.decode(value).trim();
-                dataString = dataString.replaceAll('%', '');
-
-                if (dataString.startsWith("LIGHT_STATE:")) {
-                  setState(() {
-                    _isLightOn = (dataString == "LIGHT_STATE:1");
-                  });
-                } else if (dataString.startsWith("IP:")) {
-                  setState(() {
-                    _esp32IpAddress = dataString.substring(3);
-                    print("[BLE] Ricevuto IP dinamico dall'ESP32: $_esp32IpAddress");
-                  });
-                } else if (dataString.startsWith("BATTERY:")) {
-                  setState(() {
-                    try {
-                      // %d = intero, %f = double/float, %s = stringa
-                      final scanf = ScanF("BATTERY:%d,%f,%s");
-                      final parsed = scanf.match(dataString);
-
-                      if (parsed != null && parsed.length >= 3) {
-                        int battPercent = parsed[0];
-                        double battVoltage = parsed[1];
-                        String battState = parsed[2];
-
-                        _batteryLevel = battPercent.clamp(0, 100);
-
-                        //print("[SCANF BATTERY] %: $battPercent, Volt: $battVoltage, Stato: $battState");
-                      }
-                    } catch (e) {
-                      print("Errore nel parsing con pacchetto scanf: $e");
-                      _batteryLevel = 0;
-                    }
-                  });
-                } else { // unknown
-                  print("Comando sconosciusto ricevuto: $dataString");
-                }
-                //print("Dati ricevuti dall'ESP32: $dataString");
-              });
-            }
-          }
-        }
-      }
+      await _setupCharacteristics(services);
 
       // Chiamiamo il timer all'esterno del ciclo, solo se la caratteristica TX è pronta
       if (_txCharacteristic != null) {
@@ -689,21 +698,9 @@ print("avvio timer scansione in _startScan");
 
                           // Riscopre i servizi per riagganciare i canali RX e TX
                           List<BluetoothService> services = await _connectedDevice!.discoverServices();
-                          for (var service in services) {
-                            if (service.uuid.toString().toLowerCase() == AppConstants.serviceUuid.toLowerCase()) {
-                              for (var characteristic in service.characteristics) {
-                                String cUuid = characteristic.uuid.toString().toLowerCase();
-                                if (cUuid == AppConstants.characteristicUuidRx.toLowerCase()) {
-                                  _rxCharacteristic = characteristic;
-                                  await characteristic.setNotifyValue(true);
-                                }
-                                if (cUuid == AppConstants.characteristicUuidTx.toLowerCase()) {
-                                  _txCharacteristic = characteristic;
-                                }
-                              }
-                            }
-                          }
-                          print("[BLE] BLE connected");
+                          await _setupCharacteristics(services); // <--- Rigenera l'ascoltatore e abilita le notifiche nell'ordine corretto!
+
+                          //print("[BLE] BLE reconnected");
                         }
 
                         // 4. Se il dispositivo è online (o è stato riagganciato), riavvia il timer
