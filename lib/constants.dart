@@ -7,9 +7,9 @@ class AppConstants {
   static const String prefMacAddressKey = "saved_esp32_mac";
 
   // UUID del firmware
-  static const String serviceUuid = "fc96f65e-318a-4001-84bd-77e9d12af44b";
-  static const String characteristicUuidRx = "94b43599-5ea2-41e7-9d99-6ff9b904ae3a";
-  static const String characteristicUuidTx = "04d3552e-b9b3-4be6-a8b4-aa43c4507c4d";
+  static const String serviceUuid = "fc96f65e-5ea2-0000-0000-aa11bb220000";
+  static const String characteristicUuidRx = "fc96f65e-5ea2-0000-0000-aa11bb22000a";
+  static const String characteristicUuidTx = "fc96f65e-5ea2-0000-0000-aa11bb22000b";
 
   // --- RETE E WEBVIEW ---
   static const String defaultIpAddress = "192.168.4.1";
